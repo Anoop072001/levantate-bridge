@@ -125,7 +125,7 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Record deployed address, deploy block number, and ABI where `backend`, `frontend`, and `subgraph` can each consume them — ABI at `contracts/abi/TaskEscrow.json`; address/block in `.env.local` and `contracts/deployments/arc-testnet.json` (`0xfb4de5a78d8085132f454cc96efd958e55a96a52`, block `0x3a4d280`)
 - [x] Manually exercise `postTask` → `placeBid` → `selectWinner` → `submitWork` → `approveWork` on Arc testnet via `cast`, confirming the USDC balance actually moved — task 1 paid 0.8 USDC to worker `0x579Af55b4d9152F87bfb39F87466BeA0E78DfC61`
 - [x] Manually exercise the reclaim path on Arc testnet with a short `submissionWindow`, confirming the task returns to `Open` and escrow is still held — task 2 reclaimed to round 1, escrow held 1.5 USDC (includes task 0 still in `Submitted`)
-- [ ] **COMMIT 1** — escrow contract deployed to Arc testnet (including `submissionDeadline` and `reclaimTask`)
+- [x] **COMMIT 1** — escrow contract deployed to Arc testnet (including `submissionDeadline` and `reclaimTask`) — landed in `84e26ce`
 
 
 
