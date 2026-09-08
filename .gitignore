@@ -1,0 +1,22 @@
+# Secrets — all real values live in .env.local
+.env*
+!.env.example
+
+# Circle entity secret recovery file
+recovery_file*
+
+# Node
+node_modules/
+
+# Foundry — dependencies restored via `cd contracts && forge install` (see foundry.lock)
+contracts/lib/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# The Graph
+subgraph/generated/
+subgraph/build/
+
+# OS
+.DS_Store
