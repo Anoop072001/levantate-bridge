@@ -1,0 +1,67 @@
+type Task @entity(immutable: false) {
+  id: ID!
+  description: String!
+  maxBudget: BigInt!
+  bidDeadline: BigInt!
+  submissionWindow: BigInt!
+  submissionDeadline: BigInt!
+  round: Int!
+  state: String!
+  agent: Bytes!
+  assignedWorker: Worker
+  winningBid: Bid
+  winningBidAmount: BigInt!
+  proofHash: Bytes
+  createdAt: BigInt!
+  updatedAt: BigInt!
+  transactionHash: Bytes!
+  blockTimestamp: BigInt!
+  bids: [Bid!]! @derivedFrom(field: "task")
+  payments: [Payment!]! @derivedFrom(field: "task")
+  missedDeadlines: [MissedDeadline!]! @derivedFrom(field: "task")
+}
+
+type Bid @entity(immutable: true) {
+  id: ID!
+  task: Task!
+  worker: Worker!
+  amount: BigInt!
+  round: Int!
+  createdAt: BigInt!
+  transactionHash: Bytes!
+  blockTimestamp: BigInt!
+}
+
+type Worker @entity(immutable: false) {
+  id: ID!
+  address: Bytes!
+  tasksAssigned: Int!
+  tasksPaid: Int!
+  missedDeadlines: Int!
+  completionRate: BigDecimal!
+  bids: [Bid!]! @derivedFrom(field: "worker")
+  payments: [Payment!]! @derivedFrom(field: "worker")
+  missedDeadlineRecords: [MissedDeadline!]! @derivedFrom(field: "worker")
+}
+
+type Payment @entity(immutable: true) {
+  id: ID!
+  task: Task!
+  worker: Worker!
+  agent: Bytes!
+  workerAmount: BigInt!
+  refundAmount: BigInt!
+  round: Int!
+  transactionHash: Bytes!
+  blockTimestamp: BigInt!
+}
+
+type MissedDeadline @entity(immutable: true) {
+  id: ID!
+  task: Task!
+  worker: Worker!
+  newRound: Int!
+  newBidDeadline: BigInt!
+  transactionHash: Bytes!
+  blockTimestamp: BigInt!
+}

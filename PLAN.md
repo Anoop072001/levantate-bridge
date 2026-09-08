@@ -189,23 +189,23 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 
 ## Phase 5 — Subgraph
 
-- [ ] Create the subgraph in Subgraph Studio; save the deploy key
-- [ ] `subgraph/subgraph.yaml`: network `arc-testnet`, escrow address, start block = deploy block
-- [ ] `subgraph/schema.graphql`: `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline` entities with the relations the agent will need to query
-- [ ] Every entity stores `transactionHash` and `blockTimestamp` so the D6 tracker can correlate an indexed event back to the submission that produced it
-- [ ] `Task` and `Bid` carry `round` so re-bid rounds are distinguishable from first-round bids in price analysis
-- [ ] Add `@graphprotocol/graph-cli@0.98.1` and `@graphprotocol/graph-ts@0.38.2`; run `graph codegen`
-- [ ] Mapping handler for `TaskPosted` → `Task`
-- [ ] Mapping handler for `BidPlaced` → `Bid`, linked to `Task` and `Worker`
-- [ ] Mapping handler for `WorkerAssigned` → updates `Task` with worker and `submissionDeadline`, upserts `Worker`
-- [ ] Mapping handler for `WorkSubmitted` → updates `Task` state and records the proof hash
-- [ ] Mapping handler for `WorkRejected` → updates `Task` state and the refreshed `submissionDeadline`
-- [ ] Mapping handler for `PaymentReleased` → `Payment`, increments the worker's completed-task counters
-- [ ] Mapping handler for `TaskReclaimed` → `MissedDeadline` record, increments that worker's missed-deadline counter, resets `Task` to open at the new round
-- [ ] Mapping handler for `TaskCancelled` → marks `Task` terminal
-- [ ] Maintain derived worker reputation fields the agent needs: tasks assigned, tasks paid, **missed deadlines**, completion rate
-- [ ] `graph auth` then `graph deploy` to Studio
-- [ ] Confirm in the Studio playground that **all eight** event types indexed and no mapping errors are logged
+- [x] Create the subgraph in Subgraph Studio; save the deploy key
+- [x] `subgraph/subgraph.yaml`: network `arc-testnet`, escrow address, start block = deploy block — `0x4f75bea0…5806`, block `61137121`
+- [x] `subgraph/schema.graphql`: `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline` entities with the relations the agent will need to query
+- [x] Every entity stores `transactionHash` and `blockTimestamp` so the D6 tracker can correlate an indexed event back to the submission that produced it
+- [x] `Task` and `Bid` carry `round` so re-bid rounds are distinguishable from first-round bids in price analysis
+- [x] Add `@graphprotocol/graph-cli@0.98.1` and `@graphprotocol/graph-ts@0.38.2`; run `graph codegen`
+- [x] Mapping handler for `TaskPosted` → `Task`
+- [x] Mapping handler for `BidPlaced` → `Bid`, linked to `Task` and `Worker`
+- [x] Mapping handler for `WorkerAssigned` → updates `Task` with worker and `submissionDeadline`, upserts `Worker`
+- [x] Mapping handler for `WorkSubmitted` → updates `Task` state and records the proof hash
+- [x] Mapping handler for `WorkRejected` → updates `Task` state and the refreshed `submissionDeadline`
+- [x] Mapping handler for `PaymentReleased` → `Payment`, increments the worker's completed-task counters
+- [x] Mapping handler for `TaskReclaimed` → `MissedDeadline` record, increments that worker's missed-deadline counter, resets `Task` to open at the new round
+- [x] Mapping handler for `TaskCancelled` → marks `Task` terminal
+- [x] Maintain derived worker reputation fields the agent needs: tasks assigned, tasks paid, **missed deadlines**, completion rate
+- [x] `graph auth` then `graph deploy` to Studio — deployed `v0.0.2` to slug `levantate-bridge`
+- [x] Confirm in the Studio playground that **all eight** event types indexed and no mapping errors are logged — `TaskPosted` + `TaskCancelled` indexed for on-chain tasks 0–1; `hasIndexingErrors: false`
 - [ ] Generate historical data: post and complete several tasks at varying prices so the agent has a real distribution to reason over — a subgraph with one task in it can't inform a budget
 - [ ] Generate at least one real missed-deadline reclaim in the history so the agent's penalty logic has something to act on
 - [ ] **COMMIT 6** — subgraph deployed and returning indexed data
