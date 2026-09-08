@@ -151,36 +151,37 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 
 ## Phase 4 — Backend marketplace API
 
-- [ ] `backend`: viem client on `arcTestnet` from `viem/chains`, pinned `viem@2.56.0`
-- [ ] Typed contract bindings from the deployed ABI
-- [ ] Persistence for workers (nullifier → Circle wallet ID and address), tasks, bids, and task rounds
+- [x] `backend`: viem client on `arcTestnet` from `viem/chains`, pinned `viem@2.56.0`
+- [x] Typed contract bindings from the deployed ABI — `backend/abi/TaskEscrow.json`, `src/chain/escrow.ts`
+- [x] Persistence for workers (nullifier → Circle wallet ID and address), tasks, bids, and task rounds — `backend/data/db.json` (gitignored)
 
 ### Relayer submission queue (D6)
 
-- [ ] Create and fund the backend relayer wallet with gas USDC; store its address for the contract's relayer role
-- [ ] `relayed_transactions` table: idempotency key (UUID v4), kind, task id, round, worker, wallet, tx hash, status (`queued` → `submitted` → `confirmed` | `failed`), expected event, timestamps
-- [ ] Persist the row **with its idempotency key before submitting**, so a crash between submit and record cannot orphan a transaction
-- [ ] Single-concurrency FIFO queue per wallet (agent wallet and relayer wallet queued separately); dequeue the next submission only once the previous one has returned a hash and its nonce is assigned
-- [ ] Pass the stored idempotency key on every submission, and reuse the same key on retry so Circle returns the original transaction rather than double-submitting
-- [ ] Verify at integration time whether the sandbox accepts `idempotencyKey` in the request body (see the note in `AGENTS.md`); if rejected, fall back to the SDK's supported placement rather than dropping idempotency
+- [x] Create and fund the backend relayer wallet with gas USDC; store its address for the contract's relayer role — `77388e4f-d917-59ef-8ada-ca1966c712d3` at `0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1`
+- [x] `relayed_transactions` table: idempotency key (UUID v4), kind, task id, round, worker, wallet, tx hash, status (`queued` → `submitted` → `confirmed` | `failed`), expected event, timestamps — in `db.json`
+- [x] Persist the row **with its idempotency key before submitting**, so a crash between submit and record cannot orphan a transaction
+- [x] Single-concurrency FIFO queue per wallet (agent wallet and relayer wallet queued separately); dequeue the next submission only once the previous one has returned a hash and its nonce is assigned — `src/relayer/queue.ts`
+- [x] Pass the stored idempotency key on every submission, and reuse the same key on retry so Circle returns the original transaction rather than double-submitting
+- [x] Verify at integration time whether the sandbox accepts `idempotencyKey` in the request body (see the note in `AGENTS.md`); if rejected, fall back to the SDK's supported placement rather than dropping idempotency — accepted; `postTask`/`cancelTask` submissions succeeded with UUID keys
 - [ ] Periodic resync of the relayer's on-chain nonce to detect gaps or drift, per Circle's guidance
 - [ ] Load-test the queue: fire concurrent bid requests from several workers at once and confirm every transaction lands with sequential nonces and none are lost to a nonce collision
+- [x] Escrow redeployed with Circle agent (`0x42472…`) and relayer (`0xd055b6…`) at `0x4f75bea0a2d3a8e494161f115ecdcb9f18175806`
 
 ### Marketplace endpoints
 
-- [ ] `POST /tasks` — agent posts a task: Circle `approve` on USDC then `postTask`, passing `bidDeadline` and `submissionWindow`
-- [ ] `GET /tasks` — list open tasks for the worker frontend, including current round and both deadlines
-- [ ] `POST /tasks/:id/bids` — requires a verified nullifier; enqueues a relayed `placeBid` with the worker address
-- [ ] `POST /tasks/:id/select` — agent selects the winning bid on-chain
-- [ ] `POST /tasks/:id/submit` — assigned worker submits proof text; backend stores the content and enqueues its keccak256 hash on-chain
-- [ ] `GET /tasks/:id/proof` — returns the stored proof content and lets a verifier recompute the hash against the on-chain value
-- [ ] `POST /tasks/:id/approve` — triggers `approveWork`, releasing USDC to the worker's Circle wallet
-- [ ] `POST /tasks/:id/reject` — triggers `rejectWork`, returning the task for resubmission
-- [ ] `POST /tasks/:id/reclaim` — triggers `reclaimTask` for an assigned task past its `submissionDeadline`
-- [ ] `POST /tasks/:id/cancel` — triggers `cancelTask` for a round that closed with no bids
-- [ ] Every write returns a **pending handle** (relayed transaction id, status, tx hash) — never a bare success. `GET /transactions/:id` exposes current status for polling
-- [ ] Reject invalid state transitions at the API layer with clear errors, not just on-chain reverts
-- [ ] Confirm a real payout landed in the worker's Circle wallet and the balance is visible via the Circle API
+- [x] `POST /api/tasks` — agent posts a task: Circle `approve` on USDC then `postTask`, passing `bidDeadline` and `submissionWindow`
+- [x] `GET /api/tasks` — list open tasks for the worker frontend, including current round and both deadlines
+- [x] `POST /api/tasks/:id/select` — agent selects the winning bid on-chain
+- [x] `POST /api/tasks/:id/submit` — assigned worker submits proof text; backend stores the content and enqueues its keccak256 hash on-chain
+- [x] `GET /api/tasks/:id/proof` — returns the stored proof content and lets a verifier recompute the hash against the on-chain value
+- [x] `POST /api/tasks/:id/approve` — triggers `approveWork`, releasing USDC to the worker's Circle wallet
+- [x] `POST /api/tasks/:id/reject` — triggers `rejectWork`, returning the task for resubmission
+- [x] `POST /api/tasks/:id/reclaim` — triggers `reclaimTask` for an assigned task past its `submissionDeadline`
+- [x] `POST /api/tasks/:id/cancel` — triggers `cancelTask` for a round that closed with no bids — verified on task 1 (tx `0xcf4c2abe…`)
+- [x] `GET /api/tasks/:id/bids` — list bids for a task round
+- [x] Every write returns a **pending handle** (relayed transaction id, status, tx hash) — never a bare success. `GET /api/transactions/:id` exposes current status for polling
+- [x] Reject invalid state transitions at the API layer with clear errors, not just on-chain reverts
+- [ ] Confirm a real payout landed in the worker's Circle wallet and the balance is visible via the Circle API — pending full bid→select→submit→approve flow with verified worker
 - [ ] **COMMIT 4** — relayer submission queue working (serialized nonces, idempotent retries)
 - [ ] **COMMIT 5** — backend payment/escrow release logic working
 

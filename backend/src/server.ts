@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { URL } from "node:url";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { loadRootEnv, requireEnv } from "./env.js";
 import { createWorkerWallet } from "./circle/create-worker-wallet.js";
+import { handleTasksRoute } from "./routes/tasks.js";
 import { extractNullifierHash } from "./world-id/nullifier.js";
 import {
   consumeExpectedSignal,
@@ -44,19 +46,29 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const url = req.url ?? "/";
+  const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
+  const send = (status: number, body: unknown) => json(res, status, body);
 
-  if (req.method === "GET" && url === "/health") {
-    json(res, 200, { ok: true });
+  if (req.method === "GET" && url.pathname === "/health") {
+    send(200, { ok: true });
     return;
   }
 
-  if (req.method === "POST" && url === "/api/world-id/rp-signature") {
+  const body = req.method === "POST" ? await readBody(req) : undefined;
+
+  try {
+    if (await handleTasksRoute(req, res, url, body, send)) return;
+  } catch (err) {
+    send(500, { error: err instanceof Error ? err.message : "Request failed" });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/world-id/rp-signature") {
     try {
-      const body = (await readBody(req)) as { signal?: string };
-      const signal = body.signal?.trim();
+      const payload = body as { signal?: string };
+      const signal = payload.signal?.trim();
       if (!signal) {
-        json(res, 400, { error: "signal is required" });
+        send(400, { error: "signal is required" });
         return;
       }
 
@@ -69,7 +81,7 @@ const server = createServer(async (req, res) => {
       const signalToken = createSignalToken();
       registerExpectedSignal(signalToken, signal);
 
-      json(res, 200, {
+      send(200, {
         sig,
         nonce,
         created_at: createdAt,
@@ -81,32 +93,32 @@ const server = createServer(async (req, res) => {
         signal_token: signalToken,
       });
     } catch (err) {
-      json(res, 500, { error: err instanceof Error ? err.message : "RP signature failed" });
+      send(500, { error: err instanceof Error ? err.message : "RP signature failed" });
     }
     return;
   }
 
-  if (req.method === "POST" && url === "/api/world-id/verify") {
+  if (req.method === "POST" && url.pathname === "/api/world-id/verify") {
     try {
-      const body = (await readBody(req)) as {
+      const payload = body as {
         rp_id?: string;
         idkitResponse?: Record<string, unknown>;
         signal?: string;
         signal_token?: string;
       };
 
-      const rpId = body.rp_id ?? requireEnv("WORLD_RP_ID");
-      const idkitResponse = body.idkitResponse;
-      const signal = body.signal?.trim();
-      const signalToken = body.signal_token?.trim();
+      const rpId = payload.rp_id ?? requireEnv("WORLD_RP_ID");
+      const idkitResponse = payload.idkitResponse;
+      const signal = payload.signal?.trim();
+      const signalToken = payload.signal_token?.trim();
 
       if (!idkitResponse || !signal || !signalToken) {
-        json(res, 400, { error: "idkitResponse, signal, and signal_token are required" });
+        send(400, { error: "idkitResponse, signal, and signal_token are required" });
         return;
       }
 
       if (!consumeExpectedSignal(signalToken, signal)) {
-        json(res, 400, { error: "Signal mismatch or expired session" });
+        send(400, { error: "Signal mismatch or expired session" });
         return;
       }
 
@@ -118,7 +130,7 @@ const server = createServer(async (req, res) => {
 
       if (!verifyRes.ok) {
         const detail = await verifyRes.text();
-        json(res, 400, { error: "World ID verification failed", detail });
+        send(400, { error: "World ID verification failed", detail });
         return;
       }
 
@@ -126,13 +138,13 @@ const server = createServer(async (req, res) => {
         idkitResponse as { responses?: Array<{ nullifier?: string; session_nullifier?: string[] }> },
       );
       if (!nullifierHash) {
-        json(res, 400, { error: "No nullifier in IDKit response" });
+        send(400, { error: "No nullifier in IDKit response" });
         return;
       }
 
       const existing = findWorkerByNullifier(nullifierHash);
       if (existing) {
-        json(res, 409, {
+        send(409, {
           error: "Duplicate World ID — this identity already has a worker wallet",
           walletAddress: existing.address,
         });
@@ -148,19 +160,19 @@ const server = createServer(async (req, res) => {
         createdAt: new Date().toISOString(),
       });
 
-      json(res, 200, {
+      send(200, {
         success: true,
         nullifierHash,
         walletId,
         walletAddress: address,
       });
     } catch (err) {
-      json(res, 500, { error: err instanceof Error ? err.message : "Verification failed" });
+      send(500, { error: err instanceof Error ? err.message : "Verification failed" });
     }
     return;
   }
 
-  json(res, 404, { error: "Not found" });
+  send(404, { error: "Not found" });
 });
 
 server.listen(PORT, () => {

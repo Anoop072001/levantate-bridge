@@ -1,0 +1,104 @@
+import { randomUUID } from "node:crypto";
+import { createCircleClient } from "../circle/client.js";
+import {
+  findRelayedByIdempotencyKey,
+  insertRelayedTransaction,
+  updateRelayedTransaction,
+  type RelayedTransaction,
+} from "../store.js";
+import { getWalletQueue } from "./queue.js";
+
+export interface ContractCallInput {
+  walletId: string;
+  kind: string;
+  expectedEvent: string;
+  contractAddress: string;
+  abiFunctionSignature: string;
+  abiParameters: Array<string | number | boolean>;
+  taskId?: number;
+  round?: number;
+  worker?: string;
+  idempotencyKey?: string;
+}
+
+async function waitForCircleTx(circleTxId: string): Promise<string | undefined> {
+  const client = createCircleClient();
+  for (let i = 0; i < 60; i++) {
+    const res = await client.getTransaction({ id: circleTxId });
+    const state = res.data?.transaction?.state;
+    const hash = res.data?.transaction?.txHash;
+    if (state === "COMPLETE" && hash) return hash;
+    if (state === "FAILED") throw new Error(`Circle transaction ${circleTxId} failed`);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error(`Timed out waiting for Circle transaction ${circleTxId}`);
+}
+
+async function submitContractCall(input: ContractCallInput): Promise<RelayedTransaction> {
+  const idempotencyKey = input.idempotencyKey ?? randomUUID();
+  const existing = findRelayedByIdempotencyKey(idempotencyKey);
+  if (existing) return existing;
+
+  const pending = insertRelayedTransaction({
+    idempotencyKey,
+    kind: input.kind,
+    taskId: input.taskId,
+    round: input.round,
+    worker: input.worker,
+    walletId: input.walletId,
+    status: "queued",
+    expectedEvent: input.expectedEvent,
+  });
+
+  const client = createCircleClient();
+  let response;
+  try {
+    response = await client.createContractExecutionTransaction({
+      walletId: input.walletId,
+      contractAddress: input.contractAddress,
+      abiFunctionSignature: input.abiFunctionSignature,
+      abiParameters: input.abiParameters,
+      idempotencyKey,
+      fee: { type: "level", config: { feeLevel: "LOW" } },
+    });
+  } catch (err) {
+    return updateRelayedTransaction(pending.id, {
+      status: "failed",
+      error: err instanceof Error ? err.message : "Circle submission failed",
+    });
+  }
+
+  const circleTxId = response.data?.id;
+  if (!circleTxId) {
+    return updateRelayedTransaction(pending.id, {
+      status: "failed",
+      error: "No Circle transaction id returned",
+    });
+  }
+
+  updateRelayedTransaction(pending.id, { status: "submitted", circleTxId });
+
+  try {
+    const txHash = await waitForCircleTx(circleTxId);
+    return updateRelayedTransaction(pending.id, { txHash, status: "submitted" });
+  } catch (err) {
+    return updateRelayedTransaction(pending.id, {
+      status: "failed",
+      error: err instanceof Error ? err.message : "Transaction failed",
+    });
+  }
+}
+
+export function enqueueContractCall(input: ContractCallInput): Promise<RelayedTransaction> {
+  return getWalletQueue(input.walletId).enqueue(() => submitContractCall(input));
+}
+
+export function pendingHandle(tx: RelayedTransaction) {
+  return {
+    transactionId: tx.id,
+    status: tx.status,
+    txHash: tx.txHash ?? null,
+    kind: tx.kind,
+    expectedEvent: tx.expectedEvent,
+  };
+}
