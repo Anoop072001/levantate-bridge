@@ -90,14 +90,14 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 
 ## Phase 1 — Circle account and wallets
 
-- [ ] Create Circle developer account; obtain API key for testnet
-- [ ] Generate and register the entity secret; store the recovery file outside the repo
-- [ ] Install `@circle-fin/cli` (Agent Stack) and verify with `circle --version`
-- [ ] Add `@circle-fin/developer-controlled-wallets@10.8.0` to `backend`
-- [ ] `backend`: initialize the Circle client via `initiateDeveloperControlledWalletsClient`
-- [ ] Create one wallet set; create the requesting agent's wallet on `ARC-TESTNET`
-- [ ] Fund the agent wallet with testnet USDC from `faucet.circle.com`; confirm balance on `testnet.arcscan.app`
-- [ ] Verify a plain USDC ERC-20 `transfer` from the agent wallet via `createContractExecutionTransaction` against `0x3600...0000` — proves the Circle → Arc path works before any custom contract exists
+- [x] Create Circle developer account; obtain API key for testnet
+- [x] Generate and register the entity secret; store the recovery file outside the repo
+- [x] Install `@circle-fin/cli` (Agent Stack) and verify with `circle --version` — `npx @circle-fin/cli --version` → 1.0.0
+- [x] Add `@circle-fin/developer-controlled-wallets@10.8.0` to `backend`
+- [x] `backend`: initialize the Circle client via `initiateDeveloperControlledWalletsClient`
+- [x] Create one wallet set; create the requesting agent's wallet on `ARC-TESTNET` — wallet set `a14db087-afb5-5c60-a7e4-59a80b79299d`, agent `d8d6ff69-5615-5a0c-8989-8ace4e7c2889` at `0x42472b448b6ba8bb654483d4773db715901a64a7`
+- [x] Fund the agent wallet with testnet USDC from `faucet.circle.com`; confirm balance on `testnet.arcscan.app`
+- [x] Verify a plain USDC ERC-20 `transfer` from the agent wallet via `createContractExecutionTransaction` against `0x3600...0000` — verified 0.1 USDC transfer on Arc testnet (tx `0x89e301dc535b5e5e111dc65c65b7bf9ec05026b9eb9d3faeb6d44c923cf6640e`)
 
 
 
