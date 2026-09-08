@@ -177,3 +177,7 @@ export function getRelayedTransaction(id: string): RelayedTransaction | undefine
 export function findRelayedByIdempotencyKey(key: string): RelayedTransaction | undefined {
   return load().relayedTransactions.find((t) => t.idempotencyKey === key);
 }
+
+export function listSubmittedRelayedTransactions(): RelayedTransaction[] {
+  return load().relayedTransactions.filter((t) => t.status === "submitted");
+}

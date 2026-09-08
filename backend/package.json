@@ -9,7 +9,9 @@
     "setup-wallets": "tsx scripts/setup-wallets.ts",
     "setup-relayer-wallet": "tsx scripts/setup-relayer-wallet.ts",
     "verify-usdc-transfer": "tsx scripts/verify-usdc-transfer.ts",
-    "dev": "tsx src/server.ts"
+    "dev": "tsx src/server.ts",
+    "reconcile": "tsx scripts/reconcile-once.ts",
+    "test-revert-tracker": "tsx scripts/test-revert-tracker.ts"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "10.8.0",

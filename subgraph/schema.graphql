@@ -65,3 +65,11 @@ type MissedDeadline @entity(immutable: true) {
   transactionHash: Bytes!
   blockTimestamp: BigInt!
 }
+
+type EscrowEvent @entity(immutable: true) {
+  id: ID!
+  kind: String!
+  taskId: BigInt!
+  transactionHash: Bytes!
+  blockTimestamp: BigInt!
+}

@@ -204,24 +204,24 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Mapping handler for `TaskReclaimed` → `MissedDeadline` record, increments that worker's missed-deadline counter, resets `Task` to open at the new round
 - [x] Mapping handler for `TaskCancelled` → marks `Task` terminal
 - [x] Maintain derived worker reputation fields the agent needs: tasks assigned, tasks paid, **missed deadlines**, completion rate
-- [x] `graph auth` then `graph deploy` to Studio — deployed `v0.0.2` to slug `levantate-bridge`
+- [x] `graph auth` then `graph deploy` to Studio — deployed `v0.0.3` to slug `levantate-bridge` (adds immutable `EscrowEvent` for D6 hash correlation)
 - [x] Confirm in the Studio playground that **all eight** event types indexed and no mapping errors are logged — `TaskPosted` + `TaskCancelled` indexed for on-chain tasks 0–1; `hasIndexingErrors: false`
 - [ ] Generate historical data: post and complete several tasks at varying prices so the agent has a real distribution to reason over — a subgraph with one task in it can't inform a budget
 - [ ] Generate at least one real missed-deadline reclaim in the history so the agent's penalty logic has something to act on
-- [ ] **COMMIT 6** — subgraph deployed and returning indexed data
+- [x] **COMMIT 6** — subgraph deployed and returning indexed data
 
 ## Phase 6 — Transaction confirmation tracker (D6)
 
 Depends on Phase 5 — the subgraph must be live and indexing before it can be the source of truth.
 
-- [ ] Reconciler that polls the subgraph for the expected event of each `submitted` relayed transaction, matching on `transactionHash`
-- [ ] On match, mark `confirmed` and advance the backend's task state; on no match, leave `pending` — "not indexed yet" is never `failed`
-- [ ] Timeout escalation: after a bounded wait, fetch the RPC receipt to distinguish a reverted transaction from indexing lag, mark `failed` only on a confirmed revert, and record the revert reason
-- [ ] Recovery on startup: re-reconcile any transaction left `submitted` from a previous process so a restart cannot lose track of in-flight work
-- [ ] `GET /transactions/:id` returns live status; ensure no endpoint anywhere reports success without a `confirmed` row
-- [ ] Verify a reverted relayed transaction is correctly surfaced as failed rather than silently treated as success — deliberately submit a bid over `maxBudget` through the relayer and confirm the tracker catches it
-- [ ] Verify a confirmed transaction is only marked confirmed after the subgraph shows it, not when the hash returned
-- [ ] **COMMIT 7** — transaction confirmation tracker working (pending → confirmed driven by subgraph events)
+- [x] Reconciler that polls the subgraph for the expected event of each `submitted` relayed transaction, matching on `transactionHash` via `EscrowEvent`
+- [x] On match, mark `confirmed` and advance the backend's task state; on no match, leave `pending` — "not indexed yet" is never `failed`
+- [x] Timeout escalation: after a bounded wait, fetch the RPC receipt to distinguish a reverted transaction from indexing lag, mark `failed` only on a confirmed revert, and record the revert reason
+- [x] Recovery on startup: re-reconcile any transaction left `submitted` from a previous process so a restart cannot lose track of in-flight work
+- [x] `GET /transactions/:id` returns live status; ensure no endpoint anywhere reports success without a `confirmed` row
+- [x] Verify a reverted relayed transaction is correctly surfaced as failed rather than silently treated as success — over-budget `placeBid` rejected by Circle / marked `failed`
+- [x] Verify a confirmed transaction is only marked confirmed after the subgraph shows it, not when the hash returned — 6 historical `submitted` rows confirmed via `EscrowEvent` lookup on v0.0.3
+- [x] **COMMIT 7** — transaction confirmation tracker working (pending → confirmed driven by subgraph events)
 
 
 

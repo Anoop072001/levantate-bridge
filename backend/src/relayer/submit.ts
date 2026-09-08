@@ -93,12 +93,19 @@ export function enqueueContractCall(input: ContractCallInput): Promise<RelayedTr
   return getWalletQueue(input.walletId).enqueue(() => submitContractCall(input));
 }
 
-export function pendingHandle(tx: RelayedTransaction) {
+export function transactionResponse(tx: RelayedTransaction) {
   return {
     transactionId: tx.id,
     status: tx.status,
     txHash: tx.txHash ?? null,
     kind: tx.kind,
     expectedEvent: tx.expectedEvent,
+    taskId: tx.taskId ?? null,
+    error: tx.error ?? null,
+    updatedAt: tx.updatedAt,
   };
+}
+
+export function pendingHandle(tx: RelayedTransaction) {
+  return transactionResponse(tx);
 }

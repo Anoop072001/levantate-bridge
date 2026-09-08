@@ -8,8 +8,8 @@ import {
   WorkRejected as WorkRejectedEvent,
   WorkSubmitted as WorkSubmittedEvent,
 } from "../generated/TaskEscrow/TaskEscrow";
-import { Bid, MissedDeadline, Payment, Task, Worker } from "../generated/schema";
-import { BigDecimal, BigInt, Bytes } from "@graphprotocol/graph-ts";
+import { Bid, EscrowEvent, MissedDeadline, Payment, Task, Worker } from "../generated/schema";
+import { BigDecimal, BigInt, Bytes, ethereum } from "@graphprotocol/graph-ts";
 
 const ZERO_BD = BigDecimal.fromString("0");
 
@@ -38,7 +38,18 @@ function completionRate(tasksAssigned: i32, tasksPaid: i32): BigDecimal {
   );
 }
 
+function recordEscrowEvent(kind: string, taskId: BigInt, event: ethereum.Event): void {
+  const id = event.transaction.hash.toHexString() + "-" + event.logIndex.toString();
+  const record = new EscrowEvent(id);
+  record.kind = kind;
+  record.taskId = taskId;
+  record.transactionHash = event.transaction.hash;
+  record.blockTimestamp = event.block.timestamp;
+  record.save();
+}
+
 export function handleTaskPosted(event: TaskPostedEvent): void {
+  recordEscrowEvent("TaskPosted", event.params.taskId, event);
   const id = event.params.taskId.toString();
   const task = new Task(id);
   task.description = event.params.description;
@@ -58,6 +69,7 @@ export function handleTaskPosted(event: TaskPostedEvent): void {
 }
 
 export function handleBidPlaced(event: BidPlacedEvent): void {
+  recordEscrowEvent("BidPlaced", event.params.taskId, event);
   const task = Task.load(event.params.taskId.toString());
   if (task == null) return;
 
@@ -83,6 +95,7 @@ export function handleBidPlaced(event: BidPlacedEvent): void {
 }
 
 export function handleWorkerAssigned(event: WorkerAssignedEvent): void {
+  recordEscrowEvent("WorkerAssigned", event.params.taskId, event);
   const task = Task.load(event.params.taskId.toString());
   if (task == null) return;
 
@@ -105,6 +118,7 @@ export function handleWorkerAssigned(event: WorkerAssignedEvent): void {
 }
 
 export function handleWorkSubmitted(event: WorkSubmittedEvent): void {
+  recordEscrowEvent("WorkSubmitted", event.params.taskId, event);
   const task = Task.load(event.params.taskId.toString());
   if (task == null) return;
 
@@ -118,6 +132,7 @@ export function handleWorkSubmitted(event: WorkSubmittedEvent): void {
 }
 
 export function handleWorkRejected(event: WorkRejectedEvent): void {
+  recordEscrowEvent("WorkRejected", event.params.taskId, event);
   const task = Task.load(event.params.taskId.toString());
   if (task == null) return;
 
@@ -132,6 +147,7 @@ export function handleWorkRejected(event: WorkRejectedEvent): void {
 }
 
 export function handlePaymentReleased(event: PaymentReleasedEvent): void {
+  recordEscrowEvent("PaymentReleased", event.params.taskId, event);
   const task = Task.load(event.params.taskId.toString());
   if (task == null) return;
 
@@ -161,6 +177,7 @@ export function handlePaymentReleased(event: PaymentReleasedEvent): void {
 }
 
 export function handleTaskReclaimed(event: TaskReclaimedEvent): void {
+  recordEscrowEvent("TaskReclaimed", event.params.taskId, event);
   const task = Task.load(event.params.taskId.toString());
   if (task == null) return;
 
@@ -192,6 +209,7 @@ export function handleTaskReclaimed(event: TaskReclaimedEvent): void {
 }
 
 export function handleTaskCancelled(event: TaskCancelledEvent): void {
+  recordEscrowEvent("TaskCancelled", event.params.taskId, event);
   const task = Task.load(event.params.taskId.toString());
   if (task == null) return;
 

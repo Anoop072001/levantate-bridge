@@ -10,9 +10,11 @@ import {
   createSignalToken,
   registerExpectedSignal,
 } from "./world-id/signals.js";
+import { startConfirmationReconciler } from "./confirmation/reconciler.js";
 import { findWorkerByNullifier, insertWorker } from "./store.js";
 
 loadRootEnv();
+startConfirmationReconciler();
 
 const PORT = Number(process.env.BACKEND_PORT ?? 3001);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";

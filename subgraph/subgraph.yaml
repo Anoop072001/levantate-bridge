@@ -21,6 +21,7 @@ dataSources:
         - Worker
         - Payment
         - MissedDeadline
+        - EscrowEvent
       abis:
         - name: TaskEscrow
           file: ./abis/TaskEscrow.json
