@@ -7,10 +7,12 @@
   },
   "scripts": {
     "setup-wallets": "tsx scripts/setup-wallets.ts",
-    "verify-usdc-transfer": "tsx scripts/verify-usdc-transfer.ts"
+    "verify-usdc-transfer": "tsx scripts/verify-usdc-transfer.ts",
+    "dev": "tsx src/server.ts"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "10.8.0",
+    "@worldcoin/idkit-core": "4.2.2",
     "viem": "2.56.0"
   },
   "devDependencies": {

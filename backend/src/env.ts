@@ -11,10 +11,8 @@ export function loadRootEnv(): void {
     const eq = trimmed.indexOf("=");
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq);
-    const value = trimmed.slice(eq + 1);
-    if (process.env[key] === undefined) {
-      process.env[key] = value;
-    }
+    const value = trimmed.slice(eq + 1).trim();
+    process.env[key] = value;
   }
 }
 

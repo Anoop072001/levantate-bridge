@@ -7,12 +7,17 @@ recovery_file*
 
 # Node
 node_modules/
+.next/
+out/
 
 # Foundry — dependencies restored via `cd contracts && forge install` (see foundry.lock)
 contracts/lib/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+
+# Backend runtime data
+backend/data/
 
 # The Graph
 subgraph/generated/

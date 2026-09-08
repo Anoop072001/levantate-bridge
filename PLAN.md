@@ -131,20 +131,20 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 
 ## Phase 3 — World ID Selfie Check
 
-- [ ] Register the app in the World ID Developer Portal; obtain `rp_id` and RP signing key
-- [ ] **Do this first:** request Selfie Check (Beta) access from `developers@toolsforhumanity.com` — the flag has lead time and everything else in this phase can proceed without it
+- [x] Register the app in the World ID Developer Portal; obtain `rp_id` and RP signing key
+- [ ] **Do this first:** request Selfie Check (Beta) access from `developers@toolsforhumanity.com` — tracked in `docs/selfie-check-feedback.md`
 - [ ] Get sandbox access; install the sandbox World App build via TestFlight or the private Play track
-- [ ] Add `@worldcoin/idkit@4.2.1` to `frontend`
-- [ ] `backend`: RP signature endpoint that signs the action with the signing key and returns `rp_context`
-- [ ] `frontend`: fetch `rp_context`, then open IDKit with `environment: sandbox`, `allow_legacy_proofs: true`, and the bid context as `signal`. Isolate the preset call behind a single named export so the D4 swap to `selfieCheckLegacy()` is a one-line change
+- [x] Add `@worldcoin/idkit@4.2.1` to `frontend`
+- [x] `backend`: RP signature endpoint that signs the action with the signing key and returns `rp_context` — `POST /api/world-id/rp-signature`
+- [x] `frontend`: fetch `rp_context`, then open IDKit with `environment: sandbox`, `allow_legacy_proofs: true`, and the bid context as `signal`. Isolate the preset call behind a single named export so the D4 swap to `selfieCheckLegacy()` is a one-line change — `frontend/lib/world-id-preset.ts`, page at `/verify`
 - [ ] Once the Selfie Check flag is granted, swap the preset to `selfieCheckLegacy()` and re-run the full verification flow
-- [ ] `backend`: proof verification endpoint that forwards the complete IDKit result unmodified to `POST https://developer.world.org/api/v4/verify/{rp_id}`
-- [ ] `backend`: enforce that the `signal` matches the value the server expects for this bid
-- [ ] Persist the nullifier hash and reject a second distinct worker identity presenting a known nullifier
-- [ ] Create the worker's Circle Wallet on `ARC-TESTNET` on first successful verification, keyed to the nullifier
-- [ ] **COMMIT 2** — Circle wallet creation (agent + worker) working (worker wallets land here because creation is triggered by verification)
+- [x] `backend`: proof verification endpoint that forwards the complete IDKit result unmodified to `POST https://developer.world.org/api/v4/verify/{rp_id}` — `POST /api/world-id/verify`
+- [x] `backend`: enforce that the `signal` matches the value the server expects for this bid — signal token + TTL map
+- [x] Persist the nullifier hash and reject a second distinct worker identity presenting a known nullifier — `backend/data/workers.json` (gitignored)
+- [x] Create the worker's Circle Wallet on `ARC-TESTNET` on first successful verification, keyed to the nullifier
+- [ ] **COMMIT 2** — Circle wallet creation (agent + worker) working (worker wallets land here because creation is triggered by verification) — agent done in Phase 1; worker path coded, pending live World ID proof
 - [ ] Verify the duplicate-identity block end-to-end in sandbox: same World ID, second worker account, bid rejected
-- [ ] Start `docs/selfie-check-feedback.md` and log friction as it is encountered (sandbox install, access gate, 3.0-only preset, error messages) — write this while it's fresh, not at the end
+- [x] Start `docs/selfie-check-feedback.md` and log friction as it is encountered (sandbox install, access gate, 3.0-only preset, error messages) — write this while it's fresh, not at the end
 - [ ] **COMMIT 3** — World ID Selfie Check verification working end-to-end
 
 
