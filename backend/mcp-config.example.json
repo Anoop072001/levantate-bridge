@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "levantate-bridge": {
+      "command": "npm",
+      "args": ["run", "mcp", "--prefix", "/absolute/path/to/levantate-bridge/backend"],
+      "env": {}
+    }
+  }
+}

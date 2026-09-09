@@ -6,6 +6,7 @@ import {
   updateRelayedTransaction,
   type RelayedTransaction,
 } from "../store.js";
+import { invalidateOnChainTaskCache } from "../chain/task-state.js";
 import { getWalletQueue } from "./queue.js";
 
 export interface ContractCallInput {
@@ -80,6 +81,9 @@ async function submitContractCall(input: ContractCallInput): Promise<RelayedTran
 
   try {
     const txHash = await waitForCircleTx(circleTxId);
+    if (input.taskId !== undefined) {
+      invalidateOnChainTaskCache(input.taskId);
+    }
     return updateRelayedTransaction(pending.id, { txHash, status: "submitted" });
   } catch (err) {
     return updateRelayedTransaction(pending.id, {

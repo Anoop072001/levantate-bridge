@@ -464,6 +464,17 @@ export async function findRelayedByIdempotencyKey(
   return data ? toRelayed(data) : undefined;
 }
 
+export async function listInFlightRelaysForTask(taskId: number): Promise<RelayedTransaction[]> {
+  const { data, error } = await getSupabase()
+    .from("relayed_transactions")
+    .select("*")
+    .eq("task_id", taskId)
+    .in("status", ["queued", "submitted"])
+    .returns<RelayedRow[]>();
+  if (error) fail("listInFlightRelaysForTask", error);
+  return (data ?? []).map(toRelayed);
+}
+
 export async function listSubmittedRelayedTransactions(): Promise<RelayedTransaction[]> {
   const { data, error } = await getSupabase()
     .from("relayed_transactions")

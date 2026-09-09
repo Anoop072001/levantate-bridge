@@ -8,9 +8,11 @@ import { LinkWalletButton } from "@/components/LinkWalletButton";
 import { PendingTransaction } from "@/components/PendingTransaction";
 import { bidSignal } from "@/lib/bid-signal";
 import { placeBid, usdcDisplayToMicro, usdcMicroToDisplay } from "@/lib/api";
+import { useInvalidateTaskData } from "@/lib/queries";
+import { isBiddingOpen } from "@/lib/task-status";
 import { cn } from "@/lib/cn";
 import { shortAddress, taskHeadline, usdcParts } from "@/lib/task-display";
-import { secondsRemaining } from "@/lib/time";
+import { isPayoutReady } from "@/lib/payout-session";
 import { setWorkerSession } from "@/lib/worker-session";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { RelayedTransaction, Task } from "@/lib/types";
@@ -19,16 +21,15 @@ export function BidSheet({
   task,
   open,
   onClose,
-  onSettled,
   onSubmitted,
 }: {
   task: Task | null;
   open: boolean;
   onClose: () => void;
-  onSettled?: () => void;
   onSubmitted?: (tx: RelayedTransaction) => void;
 }) {
-  const { session, ready } = useWorkerSession();
+  const invalidateTasks = useInvalidateTaskData();
+  const { session, ready, clearedStale, connectedAddress } = useWorkerSession();
   const [activeDot, setActiveDot] = useState(0);
   const [bidAmount, setBidAmount] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -36,13 +37,9 @@ export function BidSheet({
 
   const maxDisplay = task ? usdcMicroToDisplay(task.maxBudget) : "0.00";
   const bidMicro = bidAmount ? usdcDisplayToMicro(bidAmount) : 0;
-  const canBid = Boolean(
-    task && (task.state === 0 || task.state === 1) && secondsRemaining(task.bidDeadline) > 0,
-  );
+  const canBid = Boolean(task && isBiddingOpen(task));
   const bidAmountValid = canBid && bidMicro > 0 && bidMicro <= Number(task?.maxBudget ?? 0);
-  const payoutReady = Boolean(
-    session?.nullifierHash || (session?.walletAddress && session?.linkToken),
-  );
+  const payoutReady = isPayoutReady(session, connectedAddress);
   const needsWalletLink = ready && !payoutReady;
 
   const slides = useMemo(() => {
@@ -82,10 +79,16 @@ export function BidSheet({
   async function handleBid(proof: SelfieCheckResult) {
     if (!task) return;
     setActionError(null);
+    if (!isPayoutReady(session, connectedAddress)) {
+      setActionError(
+        "Link your payout wallet first — tap Wallet, connect, and sign. Selfie Check cannot run until that is done.",
+      );
+      return;
+    }
     try {
       const tx = await placeBid(task.id, bidMicro, proof, {
-        walletAddress: session?.walletAddress,
-        linkToken: session?.linkToken,
+        walletAddress: session!.walletAddress,
+        linkToken: session!.linkToken,
       });
       if (tx.walletAddress) {
         setWorkerSession({
@@ -217,26 +220,21 @@ export function BidSheet({
 
               {pendingTx ? (
                 <div className="px-4 pb-6">
-                  <PendingTransaction
-                    initial={pendingTx}
-                    onSettled={() => {
-                      onSettled?.();
-                    }}
-                  />
+                  <PendingTransaction initial={pendingTx} />
                 </div>
               ) : (
                 <>
                   <div className="grid grid-cols-3 gap-2 px-4 pt-1 pb-4">
                     <LinkWalletButton
                       className="group flex cursor-pointer flex-col items-center gap-3"
-                      label="Wallet"
-                      render={({ onClick, busy, connected }) => (
+                      onLinked={() => setActionError(null)}
+                      render={({ onClick, busy, connected, linked, label }) => (
                         <>
                           <div className="flex h-16 w-16 items-center justify-center rounded-full border border-border/50 bg-card text-foreground shadow-sm transition-all duration-300 group-hover:bg-foreground group-hover:text-background">
                             <Wallet className="h-7 w-7" strokeWidth={2.5} />
                           </div>
                           <span className="text-[15px] font-medium text-foreground/80 transition-colors group-hover:text-foreground">
-                            {busy ? "Signing…" : connected ? "Linked" : "Wallet"}
+                            {busy ? "Signing…" : label}
                           </span>
                         </>
                       )}
@@ -275,9 +273,11 @@ export function BidSheet({
                   <p className="px-6 text-center text-xs leading-relaxed text-muted-foreground">
                     {!canBid
                       ? "Bidding is closed on this task."
-                      : needsWalletLink
-                        ? "First step: tap Wallet, connect, and sign to link your payout address. Then enter an amount and run Selfie Check."
-                        : `Enter an amount up to ${maxDisplay} USDC, then Selfie Check to submit.`}
+                      : clearedStale
+                        ? "A previous payout wallet was cleared because it did not match your connected wallet. Tap Wallet and sign again."
+                        : needsWalletLink
+                          ? "First step: tap Wallet, connect, and sign to link your payout address. Then enter an amount and run Selfie Check."
+                          : `Enter an amount up to ${maxDisplay} USDC, then Selfie Check to submit.`}
                   </p>
 
                   {actionError && (

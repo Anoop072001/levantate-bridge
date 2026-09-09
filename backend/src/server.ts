@@ -3,19 +3,22 @@ import { URL } from "node:url";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
-import { handleAgentRoute, startAgentLoop } from "./routes/agent.js";
+import { handleAgentRoute, startAgentLoop, startWinnerSelectionLoop } from "./routes/agent.js";
 import { handleTasksRoute } from "./routes/tasks.js";
 import { createWalletChallenge, consumeWalletChallenge } from "./wallet/challenge.js";
 import { createSignalToken, registerExpectedSignal } from "./world-id/signals.js";
-import { startConfirmationReconciler } from "./confirmation/reconciler.js";
 import {
   findWorkerByAddress,
   upsertLinkedWallet,
 } from "./store.js";
 
 loadRootEnv();
-startConfirmationReconciler();
-startAgentLoop();
+if (process.env.AGENT_WINNER_LOOP !== "false") {
+  startWinnerSelectionLoop();
+}
+if (process.env.AGENT_AUTO_LOOP === "true") {
+  startAgentLoop();
+}
 
 const PORT = Number(process.env.BACKEND_PORT ?? 3001);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
@@ -24,7 +27,7 @@ function json(res: import("node:http").ServerResponse, status: number, body: unk
   res.writeHead(status, {
     "content-type": "application/json",
     "access-control-allow-origin": FRONTEND_ORIGIN,
-    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
     "access-control-allow-headers": "content-type",
   });
   res.end(JSON.stringify(body));
@@ -41,7 +44,7 @@ const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "access-control-allow-origin": FRONTEND_ORIGIN,
-      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
       "access-control-allow-headers": "content-type",
     });
     res.end();
@@ -68,7 +71,13 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const body = req.method === "POST" ? await readBody(req) : undefined;
+  const isMultipartSubmit =
+    req.method === "POST" &&
+    /^\/api\/tasks\/\d+\/submit$/.test(url.pathname) &&
+    (req.headers["content-type"] ?? "").includes("multipart/form-data");
+
+  const body =
+    req.method === "POST" && !isMultipartSubmit ? await readBody(req) : undefined;
 
   try {
     if (await handleAgentRoute(req, res, url, body, send)) return;

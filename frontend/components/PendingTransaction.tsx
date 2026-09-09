@@ -1,74 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ARC_EXPLORER, fetchTransaction } from "@/lib/api";
+import { ExternalLink } from "lucide-react";
+import { ARC_EXPLORER } from "@/lib/api";
 import type { RelayedTransaction } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 export function PendingTransaction({
   initial,
-  onSettled,
   className,
 }: {
   initial: RelayedTransaction;
-  onSettled?: (tx: RelayedTransaction) => void;
   className?: string;
 }) {
-  const [tx, setTx] = useState(initial);
-
-  useEffect(() => {
-    if (tx.status === "confirmed" || tx.status === "failed") {
-      onSettled?.(tx);
-      return;
-    }
-
-    const poll = async () => {
-      try {
-        const updated = await fetchTransaction(tx.transactionId);
-        setTx(updated);
-        if (updated.status === "confirmed" || updated.status === "failed") {
-          onSettled?.(updated);
-        }
-      } catch {
-        /* keep polling */
-      }
-    };
-
-    const id = setInterval(poll, 5000);
-    return () => clearInterval(id);
-  }, [tx.transactionId, tx.status, onSettled]);
-
-  const statusClass =
-    tx.status === "confirmed"
-      ? "text-emerald-700"
-      : tx.status === "failed"
-        ? "text-red-700"
-        : "text-muted-foreground";
+  const tx = initial;
 
   return (
     <div className={cn("rounded-2xl border border-border bg-card p-4 text-sm", className)}>
       <p>
-        <strong className="capitalize">{tx.kind}</strong> —{" "}
-        <span className={statusClass}>{tx.status}</span>
+        <strong className="capitalize">{tx.kind.replace(/_/g, " ")}</strong> —{" "}
+        <span className="text-muted-foreground">{tx.status}</span>
       </p>
       {tx.txHash && (
-        <p className="mt-1">
-          Tx:{" "}
+        <p className="mt-2">
           <a
             href={`${ARC_EXPLORER}/tx/${tx.txHash}`}
             target="_blank"
             rel="noreferrer"
-            className="underline underline-offset-2"
+            className="inline-flex items-center gap-1 underline underline-offset-2"
           >
-            {tx.txHash.slice(0, 10)}…
+            View on Arcscan
+            <ExternalLink className="h-3.5 w-3.5" />
           </a>
         </p>
       )}
-      {tx.error && <p className="mt-1 text-red-700">{tx.error}</p>}
+      {tx.error && <p className="mt-2 text-red-700">{tx.error}</p>}
       {tx.status === "submitted" && (
-        <p className="mt-1 text-muted-foreground">Waiting for on-chain confirmation…</p>
+        <p className="mt-2 text-muted-foreground">
+          Transaction submitted. Check Arcscan above, then refresh this page to see updated task
+          state — like a block explorer.
+        </p>
       )}
-      {tx.status === "confirmed" && <p className="mt-1 text-emerald-700">Confirmed on-chain</p>}
+      {tx.status === "failed" && (
+        <p className="mt-2 text-red-700">Submission failed before reaching the chain.</p>
+      )}
     </div>
   );
 }

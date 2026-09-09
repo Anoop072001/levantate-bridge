@@ -2,63 +2,60 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowRight, Clock, Coins, MapPin } from "lucide-react";
 import { BidSheet } from "@/components/BidSheet";
 import { Countdown } from "@/components/Countdown";
 import { LinkWalletButton } from "@/components/LinkWalletButton";
 import { PageFrame } from "@/components/PageFrame";
 import { PendingTransaction } from "@/components/PendingTransaction";
-import { fetchBids, fetchTask, fetchWorkerBalance, submitProof, usdcMicroToDisplay } from "@/lib/api";
+import { submitProofFile, submitProofText, usdcMicroToDisplay } from "@/lib/api";
 import { insetButtonDarkClass } from "@/lib/cn";
+import { useBidsQuery, useTaskProofQuery, useTaskQuery, useWorkerBalanceQuery } from "@/lib/queries";
 import { shortAddress, taskHeadline } from "@/lib/task-display";
-import { secondsRemaining } from "@/lib/time";
+import { isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
 import { useWorkerSession } from "@/lib/use-worker-session";
-import type { Bid, RelayedTransaction, Task } from "@/lib/types";
+import type { RelayedTransaction } from "@/lib/types";
 
 export default function TaskDetailPage() {
   const params = useParams();
   const taskId = Number(params.id);
+  const taskQuery = useTaskQuery(taskId);
+  const task = taskQuery.data;
+  const bidsQuery = useBidsQuery(taskId, task?.round, Boolean(task));
+  const bids = bidsQuery.data ?? [];
+  const proofQuery = useTaskProofQuery(
+    taskId,
+    task?.round,
+    Boolean(task && (task.state === 3 || task.state === 4)),
+  );
 
-  const [task, setTask] = useState<Task | null>(null);
-  const [bids, setBids] = useState<Bid[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [submitMode, setSubmitMode] = useState<"text" | "file">("text");
   const [proofContent, setProofContent] = useState("");
   const [proofLink, setProofLink] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileNote, setFileNote] = useState("");
   const [pendingTx, setPendingTx] = useState<RelayedTransaction | null>(null);
-  const [balance, setBalance] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [bidOpenSheet, setBidOpenSheet] = useState(false);
 
   const { session, ready } = useWorkerSession();
+  const balanceQuery = useWorkerBalanceQuery(session?.walletAddress);
 
-  const reload = useCallback(() => {
-    Promise.all([fetchTask(taskId), fetchBids(taskId)])
-      .then(([nextTask, nextBids]) => {
-        setTask(nextTask);
-        setBids(nextBids.filter((b) => b.round === nextTask.round));
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Load failed"));
-  }, [taskId]);
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
-
-  useEffect(() => {
-    if (!session?.walletAddress) return;
-    fetchWorkerBalance(session.walletAddress)
-      .then(setBalance)
-      .catch(() => setBalance(null));
-  }, [session?.walletAddress, pendingTx?.status]);
+  const error =
+    taskQuery.error instanceof Error
+      ? taskQuery.error.message
+      : bidsQuery.error instanceof Error
+        ? bidsQuery.error.message
+        : null;
 
   const isAssignedWorker =
     session &&
     task &&
     task.assignedWorker.toLowerCase() === session.walletAddress.toLowerCase();
 
-  const bidOpen =
-    task && (task.state === 0 || task.state === 1) && secondsRemaining(task.bidDeadline) > 0;
+  const bidOpen = task ? isBiddingOpen(task) : false;
 
   const myBids =
     session && task
@@ -70,7 +67,15 @@ export default function TaskDetailPage() {
     if (!session?.nullifierHash || !task) return;
     setActionError(null);
     try {
-      const tx = await submitProof(taskId, session.nullifierHash, proofContent, proofLink || undefined);
+      const tx =
+        submitMode === "file"
+          ? await submitProofFile(taskId, session.nullifierHash, proofFile!, fileNote || undefined)
+          : await submitProofText(
+              taskId,
+              session.nullifierHash,
+              proofContent,
+              proofLink || undefined,
+            );
       setPendingTx(tx);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Submit failed");
@@ -88,7 +93,7 @@ export default function TaskDetailPage() {
     );
   }
 
-  if (!task) {
+  if (taskQuery.isPending || !task) {
     return (
       <PageFrame>
         <p className="text-muted-foreground">Loading…</p>
@@ -118,7 +123,7 @@ export default function TaskDetailPage() {
           </span>
           <span>•</span>
           <span className="inline-flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5" /> {task.stateLabel}
+            <Clock className="h-3.5 w-3.5" /> {taskDisplayStatus(task)}
           </span>
           <span>•</span>
           <span className="inline-flex items-center gap-1">
@@ -136,10 +141,10 @@ export default function TaskDetailPage() {
       {ready && session && (
         <p className="mb-2 text-sm text-muted-foreground">
           Your worker wallet: <code className="text-foreground">{shortAddress(session.walletAddress)}</code>
-          {balance !== null && (
+          {balanceQuery.data !== undefined && (
             <>
               {" "}
-              · {usdcMicroToDisplay(balance)} USDC —{" "}
+              · {usdcMicroToDisplay(balanceQuery.data)} USDC —{" "}
               <Link href="/wallet" className="underline underline-offset-2">
                 wallet
               </Link>
@@ -174,15 +179,7 @@ export default function TaskDetailPage() {
 
       {pendingTx && !bidOpenSheet && (
         <div className="mt-6">
-          <PendingTransaction
-            initial={pendingTx}
-            onSettled={() => {
-              reload();
-              if (session?.walletAddress) {
-                fetchWorkerBalance(session.walletAddress).then(setBalance).catch(() => undefined);
-              }
-            }}
-          />
+          <PendingTransaction initial={pendingTx} />
         </div>
       )}
 
@@ -213,27 +210,92 @@ export default function TaskDetailPage() {
       {task.state === 2 && isAssignedWorker && session?.nullifierHash && (
         <section className="mt-10 max-w-xl space-y-4 border-t border-border pt-8">
           <h2 className="text-2xl font-bold tracking-tight">Submit proof</h2>
+          <p className="text-sm text-muted-foreground">
+            Submit written proof or upload a file (PDF, Word, Excel, CSV, or plain text). The agent
+            reviews whichever format you choose.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSubmitMode("text")}
+              className={`rounded-full px-4 py-1.5 text-sm ${submitMode === "text" ? "bg-foreground text-background" : "border border-border"}`}
+            >
+              Write
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubmitMode("file")}
+              className={`rounded-full px-4 py-1.5 text-sm ${submitMode === "file" ? "bg-foreground text-background" : "border border-border"}`}
+            >
+              Upload file
+            </button>
+          </div>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <label className="block text-sm">
-              Summary / proof text
-              <textarea
-                value={proofContent}
-                onChange={(e) => setProofContent(e.target.value)}
-                required
-                rows={5}
-                className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
-              />
-            </label>
-            <label className="block text-sm">
-              Optional link
-              <input
-                type="url"
-                value={proofLink}
-                onChange={(e) => setProofLink(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
-              />
-            </label>
-            <button type="submit" className={insetButtonDarkClass}>
+            {submitMode === "text" ? (
+              <>
+                <label className="block text-sm">
+                  Summary / proof text
+                  <textarea
+                    value={proofContent}
+                    onChange={(e) => setProofContent(e.target.value)}
+                    required
+                    rows={5}
+                    className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
+                  />
+                </label>
+                <label className="block text-sm">
+                  Optional link
+                  <input
+                    type="url"
+                    value={proofLink}
+                    onChange={(e) => setProofLink(e.target.value)}
+                    className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <div className="space-y-1.5 text-sm">
+                  <p>File (max 10 MB)</p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv"
+                    required
+                    onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
+                    className="sr-only"
+                  />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className={insetButtonDarkClass}
+                    >
+                      Choose file
+                    </button>
+                    {proofFile ? (
+                      <span className="text-muted-foreground">{proofFile.name}</span>
+                    ) : (
+                      <span className="text-muted-foreground">No file selected</span>
+                    )}
+                  </div>
+                </div>
+                <label className="block text-sm">
+                  Optional note for the agent
+                  <textarea
+                    value={fileNote}
+                    onChange={(e) => setFileNote(e.target.value)}
+                    rows={3}
+                    className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
+                  />
+                </label>
+              </>
+            )}
+            <button
+              type="submit"
+              disabled={submitMode === "file" && !proofFile}
+              className={insetButtonDarkClass}
+            >
               Submit work
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </button>
@@ -243,6 +305,45 @@ export default function TaskDetailPage() {
 
       {ready && task.state === 2 && session && !isAssignedWorker && (
         <p className="mt-8 text-sm text-muted-foreground">You are not the assigned worker for this task.</p>
+      )}
+
+      {(task.state === 3 || task.state === 4) && proofQuery.data && (
+        <section className="mt-10 max-w-xl space-y-3 border-t border-border pt-8">
+          <h2 className="text-2xl font-bold tracking-tight">Submitted proof</h2>
+          {proofQuery.data.submission.kind === "text" ? (
+            <div className="space-y-2 text-sm">
+              <p className="whitespace-pre-wrap">{proofQuery.data.submission.text}</p>
+              {proofQuery.data.submission.link && (
+                <a
+                  href={proofQuery.data.submission.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  {proofQuery.data.submission.link}
+                </a>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2 text-sm">
+              <p>
+                File: <strong>{proofQuery.data.submission.fileName}</strong> (
+                {(proofQuery.data.submission.sizeBytes / 1024).toFixed(1)} KB)
+              </p>
+              {proofQuery.data.submission.note && (
+                <p className="text-muted-foreground">Note: {proofQuery.data.submission.note}</p>
+              )}
+              <a
+                href={proofQuery.data.submission.downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                Download submitted file
+              </a>
+            </div>
+          )}
+        </section>
       )}
 
       {task.state === 3 && isAssignedWorker && (
@@ -263,7 +364,6 @@ export default function TaskDetailPage() {
         task={task}
         open={bidOpenSheet}
         onClose={() => setBidOpenSheet(false)}
-        onSettled={reload}
         onSubmitted={setPendingTx}
       />
     </PageFrame>

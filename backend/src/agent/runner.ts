@@ -4,13 +4,15 @@ import {
   getProof,
   getTask,
   listBidsForTask,
+  listInFlightRelaysForTask,
   listTasks,
   type BidRecord,
   type RelayedTransaction,
 } from "../store.js";
 import { deriveTaskParams } from "./budget.js";
 import { approveWork, rejectWork, selectWinner } from "./operations.js";
-import { evaluateProof, isProofEvaluationAvailable } from "./proof-evaluator.js";
+import { isProofEvaluationAvailable } from "./proof-evaluator.js";
+import { evaluateProofRecord } from "../proof/evaluate-record.js";
 import { scoreBids } from "./score-bids.js";
 
 export interface AgentAction {
@@ -59,7 +61,7 @@ async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
 
   let verdict;
   try {
-    verdict = await evaluateProof(stored.description, proof.content);
+    verdict = await evaluateProofRecord(stored.description, proof);
   } catch (err) {
     return {
       kind: "approve_work",
@@ -85,20 +87,54 @@ async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
   };
 }
 
-export async function runAgentCycle(): Promise<AgentRunResult> {
-  const client = createArcPublicClient();
+async function maybeAssignWinner(taskId: number): Promise<AgentAction | undefined> {
+  const inFlight = await listInFlightRelaysForTask(taskId);
+  if (inFlight.some((tx) => tx.kind === "select_winner")) {
+    return undefined;
+  }
+
+  const onChain = await readOnChainTask(taskId);
+  if (onChain.state !== 1 || nowSeconds() <= onChain.bidDeadline) {
+    return undefined;
+  }
+
+  const bids = await listBidsForTask(taskId, onChain.round);
+  if (bids.length === 0) {
+    return undefined;
+  }
+
+  return assignWinner(taskId);
+}
+
+/** Select winners for tasks whose bid deadline passed. Runs by default; proof review stays manual. */
+export async function runWinnerSelectionCycle(): Promise<AgentRunResult> {
   const actions: AgentAction[] = [];
   const stored = await listTasks();
 
   for (const task of stored) {
-    const onChain = await readOnChainTask(task.id, client);
-
-    if (onChain.state === 1 && nowSeconds() > onChain.bidDeadline) {
-      const bids = await listBidsForTask(task.id, onChain.round);
-      if (bids.length > 0) {
-        actions.push(await assignWinner(task.id));
-      }
+    try {
+      const action = await maybeAssignWinner(task.id);
+      if (action) actions.push(action);
+    } catch (err) {
+      console.warn(
+        `[agent] task ${task.id} winner selection skipped: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
     }
+  }
+
+  return { actions, timestamp: new Date().toISOString() };
+}
+
+export async function runAgentCycle(): Promise<AgentRunResult> {
+  const client = createArcPublicClient();
+  const winnerResult = await runWinnerSelectionCycle();
+  const actions: AgentAction[] = [...winnerResult.actions];
+  const stored = await listTasks();
+
+  for (const task of stored) {
+    const onChain = await readOnChainTask(task.id, client);
 
     if (onChain.state === 3) {
       if (!isProofEvaluationAvailable()) {

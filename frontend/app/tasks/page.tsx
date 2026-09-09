@@ -1,35 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BidSheet } from "@/components/BidSheet";
 import { TaskBoard } from "@/components/TaskBoard";
-import { fetchTasks } from "@/lib/api";
+import { useTasksQuery } from "@/lib/queries";
 import { shortAddress } from "@/lib/task-display";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { Task } from "@/lib/types";
+import { useState } from "react";
 
 export default function TasksPage() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [bidTask, setBidTask] = useState<Task | null>(null);
   const { session, ready } = useWorkerSession();
+  const { data: tasks = [], error, isPending } = useTasksQuery();
 
-  function reload() {
-    fetchTasks()
-      .then(setTasks)
-      .catch((err) => setError(err instanceof Error ? err.message : "Load failed"));
-  }
-
-  useEffect(() => {
-    reload();
-  }, []);
+  const rpcStale = tasks.some((t) => t.stale);
 
   return (
     <>
+      {rpcStale && (
+        <p className="mb-4 rounded-2xl border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+          Arc RPC is slow or unavailable — showing last known task state. Refresh to retry a live
+          read.
+        </p>
+      )}
       <TaskBoard
         tasks={tasks}
-        error={error}
+        loading={isPending}
+        error={error instanceof Error ? error.message : error ? "Load failed" : null}
         onBid={setBidTask}
         sessionHint={
           ready ? (
@@ -50,12 +48,7 @@ export default function TasksPage() {
           ) : null
         }
       />
-      <BidSheet
-        task={bidTask}
-        open={Boolean(bidTask)}
-        onClose={() => setBidTask(null)}
-        onSettled={reload}
-      />
+      <BidSheet task={bidTask} open={Boolean(bidTask)} onClose={() => setBidTask(null)} />
     </>
   );
 }

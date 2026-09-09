@@ -9,10 +9,12 @@ import { ConnectCta } from "@/components/ConnectCta";
 import { PageFrame } from "@/components/PageFrame";
 import { ARC_EXPLORER, fetchWorkerBalance, usdcMicroToDisplay } from "@/lib/api";
 import { shortAddress, usdcParts } from "@/lib/task-display";
+import { payoutSessionLabel } from "@/lib/payout-session";
+import { clearWorkerSession } from "@/lib/worker-session";
 import { useWorkerSession } from "@/lib/use-worker-session";
 
 export default function WalletPage() {
-  const { session, ready } = useWorkerSession();
+  const { session, ready, clearedStale } = useWorkerSession();
   const { address: connectedAddress } = useAccount();
   const [balance, setBalance] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +96,13 @@ export default function WalletPage() {
         </div>
       </div>
 
+      {clearedStale && (
+        <p className="mt-8 text-center text-sm text-amber-700">
+          A stored payout wallet from a previous session was cleared because it did not match your
+          connected wallet.
+        </p>
+      )}
+
       {!session ? (
         <p className="mt-8 text-center text-sm text-muted-foreground">
           After connecting,{" "}
@@ -109,7 +118,21 @@ export default function WalletPage() {
           payout address — switch accounts in your wallet if you expected them to match.
         </p>
       ) : (
-        <p className="mt-8 text-center text-xs text-muted-foreground">USDC on Arc testnet · self-custodied</p>
+        <p className="mt-8 text-center text-xs text-muted-foreground">
+          {payoutSessionLabel(session)} · USDC on Arc testnet · self-custodied
+        </p>
+      )}
+
+      {session && (
+        <p className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={() => clearWorkerSession()}
+            className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Reset stored payout wallet
+          </button>
+        </p>
       )}
 
       {error && <p className="mt-4 text-center text-sm text-red-700">{error}</p>}

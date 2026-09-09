@@ -1,5 +1,6 @@
 import type { BidRecord } from "../store.js";
-import { fetchHistoricalPayments, fetchWorkerStats } from "./queries.js";
+import { isSubgraphAvailable } from "../subgraph/client.js";
+import { fetchHistoricalPayments, fetchWorkerStatsBatch } from "./queries.js";
 
 export interface BidScore {
   bidId: number;
@@ -33,17 +34,34 @@ export async function scoreBids(
   bids: BidRecord[],
   maxBudget: bigint,
 ): Promise<BidSelectionResult> {
-  const payments = await fetchHistoricalPayments();
+  const eligible = bids.filter((b) => BigInt(b.amount) <= maxBudget);
+  if (eligible.length === 0) {
+    return {
+      winner: null,
+      scores: [],
+      reasoning: {
+        maxBudget: maxBudget.toString(),
+        medianHistoricalPaid: null,
+        eligibleBidCount: 0,
+        message: "No eligible bids at or below maxBudget",
+      },
+    };
+  }
+
+  const subgraphUp = isSubgraphAvailable();
+  const payments = subgraphUp ? await fetchHistoricalPayments() : [];
   const amounts = payments.map((p) => BigInt(p.workerAmount)).sort((a, b) => Number(a - b));
   const medianHistorical =
     amounts.length > 0 ? amounts[Math.floor(amounts.length / 2)] : null;
 
-  const eligible = bids.filter((b) => BigInt(b.amount) <= maxBudget);
+  const workerStats = subgraphUp
+    ? await fetchWorkerStatsBatch(eligible.map((b) => b.workerAddress))
+    : new Map<string, null>();
   const scores: BidScore[] = [];
 
   for (const bid of eligible) {
     const amount = BigInt(bid.amount);
-    const stats = await fetchWorkerStats(bid.workerAddress);
+    const stats = workerStats.get(bid.workerAddress.toLowerCase()) ?? null;
     const tasksAssigned = stats?.tasksAssigned ?? 0;
     const tasksPaid = stats?.tasksPaid ?? 0;
     const missedDeadlines = stats?.missedDeadlines ?? 0;

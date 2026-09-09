@@ -13,7 +13,11 @@ export function createArcPublicClient(): PublicClient {
   const rpcUrl = process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.io";
   return createPublicClient({
     chain: arcTestnet,
-    transport: http(rpcUrl),
+    transport: http(rpcUrl, {
+      timeout: 15_000,
+      retryCount: 2,
+      retryDelay: 750,
+    }),
   });
 }
 

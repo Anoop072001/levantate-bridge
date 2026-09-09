@@ -1,6 +1,6 @@
 import type { PublicClient } from "viem";
 import { createArcPublicClient, getEscrowContract } from "./escrow.js";
-import { readTaskFromSubgraph } from "../subgraph/task.js";
+import { withRpcQueue } from "./rpc-queue.js";
 
 export const TASK_STATE = ["Open", "Bidding", "Assigned", "Submitted", "Paid", "Cancelled"] as const;
 export type TaskStateName = (typeof TASK_STATE)[number];
@@ -38,21 +38,12 @@ type TaskTuple = [
 ];
 
 const rpcCache = new Map<number, { at: number; value: OnChainTask }>();
-const RPC_CACHE_MS = 8_000;
+const RPC_CACHE_MS = 60_000;
+const STALE_CACHE_MS = 600_000;
 
-async function readOnChainTaskFromRpc(
-  taskId: number,
-  client: PublicClient = createArcPublicClient(),
-): Promise<OnChainTask> {
-  const cached = rpcCache.get(taskId);
-  if (cached && Date.now() - cached.at < RPC_CACHE_MS) {
-    return cached.value;
-  }
-
-  const escrow = getEscrowContract(client);
-  const t = (await escrow.read.tasks([BigInt(taskId)])) as TaskTuple;
+function parseTaskTuple(taskId: number, t: TaskTuple): OnChainTask {
   const state = Number(t[6]);
-  const value: OnChainTask = {
+  return {
     description: t[0],
     maxBudget: t[1],
     bidDeadline: t[2],
@@ -67,22 +58,61 @@ async function readOnChainTaskFromRpc(
     proofHash: t[10] as `0x${string}`,
     currentRoundBidCount: t[11],
   };
+}
+
+async function readOnChainTaskFromRpcInner(
+  taskId: number,
+  client: PublicClient,
+): Promise<OnChainTask> {
+  const escrow = getEscrowContract(client);
+  const t = (await escrow.read.tasks([BigInt(taskId)])) as TaskTuple;
+  const value = parseTaskTuple(taskId, t);
   rpcCache.set(taskId, { at: Date.now(), value });
   return value;
 }
 
-/** Prefer subgraph (no RPC quota); fall back to cached RPC read when not indexed yet. */
+async function readOnChainTaskFromRpc(
+  taskId: number,
+  client: PublicClient = createArcPublicClient(),
+): Promise<OnChainTask> {
+  const cached = rpcCache.get(taskId);
+  const age = cached ? Date.now() - cached.at : Infinity;
+  if (cached && age < RPC_CACHE_MS) {
+    return cached.value;
+  }
+
+  return withRpcQueue(async () => {
+    try {
+      return await readOnChainTaskFromRpcInner(taskId, client);
+    } catch (err) {
+      if (cached && age < STALE_CACHE_MS) {
+        console.warn(
+          `[rpc] tasks(${taskId}) failed — serving stale cache: ${
+            err instanceof Error ? err.message : err
+          }`,
+        );
+        return cached.value;
+      }
+      throw err;
+    }
+  });
+}
+
+/** Live task state from Arc RPC (cached; stale cache used briefly when RPC times out). */
 export async function readOnChainTask(
   taskId: number,
   client: PublicClient = createArcPublicClient(),
 ): Promise<OnChainTask> {
-  try {
-    const indexed = await readTaskFromSubgraph(taskId);
-    if (indexed) return indexed;
-  } catch {
-    /* subgraph unavailable or query error — use RPC */
-  }
   return readOnChainTaskFromRpc(taskId, client);
+}
+
+export function peekCachedOnChainTask(taskId: number): OnChainTask | undefined {
+  return rpcCache.get(taskId)?.value;
+}
+
+/** Drop cached reads after a relayed write lands so the UI does not show pre-tx state. */
+export function invalidateOnChainTaskCache(taskId: number): void {
+  rpcCache.delete(taskId);
 }
 
 export function nowSeconds(): bigint {

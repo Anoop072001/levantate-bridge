@@ -1,21 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Clock, Coins, MapPin, Search, Users } from "lucide-react";
 import { Countdown } from "@/components/Countdown";
 import { cn } from "@/lib/cn";
 import { taskBudgetLabel, taskHeadline } from "@/lib/task-display";
+import { isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
 import { secondsRemaining } from "@/lib/time";
 import type { Task } from "@/lib/types";
 
 export function TaskBoard({
   tasks,
+  loading,
   error,
   sessionHint,
   onBid,
 }: {
   tasks: Task[];
+  loading?: boolean;
   error?: string | null;
   sessionHint?: React.ReactNode;
   onBid: (task: Task) => void;
@@ -25,12 +28,15 @@ export function TaskBoard({
   const [sortBy, setSortBy] = useState("");
   const [search, setSearch] = useState("");
 
-  const states = useMemo(() => [...new Set(tasks.map((t) => t.stateLabel))], [tasks]);
+  const states = useMemo(
+    () => [...new Set(tasks.map((t) => taskDisplayStatus(t)))].sort(),
+    [tasks],
+  );
   const rounds = useMemo(() => [...new Set(tasks.map((t) => `Round ${t.round}`))], [tasks]);
 
   const filtered = useMemo(() => {
     let list = tasks;
-    if (stateFilter) list = list.filter((t) => t.stateLabel === stateFilter);
+    if (stateFilter) list = list.filter((t) => taskDisplayStatus(t) === stateFilter);
     if (roundFilter) list = list.filter((t) => `Round ${t.round}` === roundFilter);
     if (search) {
       const q = search.toLowerCase();
@@ -46,8 +52,8 @@ export function TaskBoard({
       list = [...list].sort((a, b) => taskHeadline(a.description).localeCompare(taskHeadline(b.description)));
     } else if (!sortBy) {
       list = [...list].sort((a, b) => {
-        const rank = (t: Task) => (t.state === 0 || t.state === 1 ? 0 : 1);
-        return rank(a) - rank(b);
+        const rank = (t: Task) => (isBiddingOpen(t) ? 0 : 1);
+        return rank(a) - rank(b) || Number(b.maxBudget) - Number(a.maxBudget);
       });
     }
     return list;
@@ -96,7 +102,9 @@ export function TaskBoard({
       {error && <p className="mb-4 text-center text-sm text-red-700">{error}</p>}
 
       <div className="min-h-[180px]">
-        {filtered.length === 0 ? (
+        {loading ? (
+          <p className="py-16 text-center text-sm text-muted-foreground">Loading tasks…</p>
+        ) : filtered.length === 0 ? (
           <p className="py-16 text-center text-sm text-muted-foreground">
             {tasks.length === 0
               ? "No tasks right now."
@@ -166,14 +174,9 @@ function TaskRow({
   isLast: boolean;
   onBid: () => void;
 }) {
-  const [closed, setClosed] = useState(() => secondsRemaining(task.bidDeadline) <= 0);
-
-  useEffect(() => {
-    const tick = () => setClosed(secondsRemaining(task.bidDeadline) <= 0);
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [task.bidDeadline]);
+  const open = isBiddingOpen(task);
+  const status = taskDisplayStatus(task);
+  const closed = !open && (task.state === 0 || task.state === 1);
 
   return (
     <div
@@ -193,7 +196,7 @@ function TaskRow({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <MetaItem icon={<MapPin className="h-2.5 w-2.5" />} label="Arc testnet" />
           <Dot />
-          <MetaItem icon={<Clock className="h-2.5 w-2.5" />} label={task.stateLabel} />
+          <MetaItem icon={<Clock className="h-2.5 w-2.5" />} label={status} />
           <Dot />
           <MetaItem icon={<Coins className="h-2.5 w-2.5" />} label={taskBudgetLabel(task)} />
           <Dot />
@@ -204,14 +207,18 @@ function TaskRow({
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={onBid}
-        className="mt-2 flex shrink-0 items-center gap-1.5 text-sm font-medium text-foreground transition-all duration-150 hover:gap-2.5 sm:mt-0"
-      >
-        Bid
-        <ArrowRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-0.5" />
-      </button>
+      {open ? (
+        <button
+          type="button"
+          onClick={onBid}
+          className="mt-2 flex shrink-0 items-center gap-1.5 text-sm font-medium text-foreground transition-all duration-150 hover:gap-2.5 sm:mt-0"
+        >
+          Bid
+          <ArrowRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-0.5" />
+        </button>
+      ) : (
+        <span className="mt-2 shrink-0 text-sm text-muted-foreground sm:mt-0">Closed</span>
+      )}
     </div>
   );
 }

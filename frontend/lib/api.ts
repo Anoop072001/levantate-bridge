@@ -64,7 +64,7 @@ export async function placeBid(
   return data;
 }
 
-export async function submitProof(
+export async function submitProofText(
   taskId: number,
   nullifierHash: string,
   content: string,
@@ -80,10 +80,48 @@ export async function submitProof(
   return data;
 }
 
-export async function fetchTransaction(id: string): Promise<RelayedTransaction> {
-  const res = await fetch(`${backendUrl}/api/transactions/${id}`, { cache: "no-store" });
+export async function submitProofFile(
+  taskId: number,
+  nullifierHash: string,
+  file: File,
+  note?: string,
+) {
+  const form = new FormData();
+  form.append("nullifierHash", nullifierHash);
+  form.append("file", file);
+  if (note?.trim()) form.append("note", note.trim());
+
+  const res = await fetch(`${backendUrl}/api/tasks/${taskId}/submit`, {
+    method: "POST",
+    body: form,
+  });
   const data = await parseJson<RelayedTransaction>(res);
-  if (!res.ok) throw new Error(data.error ?? "Transaction not found");
+  if (!res.ok) throw new Error(data.error ?? "Submit failed");
+  return data;
+}
+
+export type TaskProofSubmission =
+  | { kind: "text"; text: string; link: string | null }
+  | {
+      kind: "file";
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+      note: string | null;
+      downloadUrl: string;
+    };
+
+export async function fetchTaskProof(
+  taskId: number,
+  round?: number,
+): Promise<{ submission: TaskProofSubmission; createdAt: string }> {
+  const url =
+    round === undefined
+      ? `${backendUrl}/api/tasks/${taskId}/proof`
+      : `${backendUrl}/api/tasks/${taskId}/proof?round=${round}`;
+  const res = await fetch(url, { cache: "no-store" });
+  const data = await parseJson<{ submission: TaskProofSubmission; createdAt: string }>(res);
+  if (!res.ok) throw new Error(data.error ?? "Proof not found");
   return data;
 }
 

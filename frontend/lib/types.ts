@@ -10,6 +10,8 @@ export interface Task {
   stateLabel: string;
   assignedWorker: string;
   currentRoundBidCount: string;
+  /** True when Arc RPC failed and the UI is showing the last stored snapshot. */
+  stale?: boolean;
 }
 
 export interface RelayedTransaction {

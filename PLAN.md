@@ -186,8 +186,8 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] `backend/supabase/schema.sql`: `workers`, `tasks`, `bids`, `proofs`, `relayed_transactions`; RLS enabled with no policies
 - [x] `@supabase/supabase-js@2.115.0` client using the service role key; async store in `backend/src/store.ts`
 - [x] One-shot importer for the old JSON store — `npm run migrate-db-json`
-- [ ] Create the hosted Supabase project, run `schema.sql`, set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
-- [ ] Re-run the end-to-end flow against Supabase and confirm reads/writes land
+- [x] Create the hosted Supabase project, run `schema.sql`, set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
+- [x] Re-run the end-to-end flow against Supabase and confirm reads/writes land — base schema + `pending_signals`, `agent_chats`, `agent_chat_messages`, `status` column, `proof-files` bucket verified via `npm run probe-supabase`
 
 
 
@@ -318,7 +318,7 @@ Depends on Phase 5 — the subgraph must be live and indexing before it can be t
 - [x] Confirm USDC actually moved: agent wallet debited, worker wallet credited, unspent budget refunded — task 1: 0.65 USDC to worker, 0.35 USDC refund to agent on 1 USDC budget
 - [x] Confirm no relayed transaction was ever reported successful before its event was indexed — all task 1 txs confirmed only after subgraph `EscrowEvent` match
 - [x] Agent loop no longer auto-reclaims on missed deadlines — explicit `POST /api/tasks/:id/reclaim` only
-- [ ] Re-verify the full flow after the D3a custody change and the D7 Supabase move
+- [x] Re-verify the full flow after the D3a custody change and the D7 Supabase move — tasks 1–9 on hosted Supabase; self-custodied worker payouts; file + text proofs
 - [ ] Fix breakage found in the run
 - [x] Sweep for dead code introduced during integration — removed the custodial worker-wallet creator, the backend withdraw path, and an unused RPC cache invalidator
 - [~] **COMMIT 11** — single-identity E2E verified; multi-identity items deferred

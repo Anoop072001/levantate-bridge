@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { keccak256, toBytes } from "viem";
+import { proofHash, parseProofContent } from "../proof/payload.js";
+import { describeProofForApi } from "../proof/evaluate-record.js";
+import { resolveProofFileDownload } from "../proof/serve-download.js";
+import { handleSubmitWork } from "../proof/submit-work.js";
 import { readUsdcBalance } from "../chain/usdc-balance.js";
 import { createArcPublicClient, getEscrowAddress } from "../chain/escrow.js";
 import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
-import { enrichTask } from "../chain/task-view.js";
+import { enrichAllTasks, enrichTask } from "../chain/task-view.js";
 import { requireEnv } from "../env.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
 import {
@@ -27,7 +30,6 @@ import {
   insertWorker,
   listBidsForTask,
   listTasks,
-  upsertProof,
 } from "../store.js";
 import { verifySelfieCheck } from "../world-id/verify.js";
 
@@ -64,8 +66,7 @@ export async function handleTasksRoute(
 
   if (req.method === "GET" && url.pathname === "/api/tasks") {
     const stored = await listTasks();
-    const enriched = await Promise.all(stored.map((t) => enrichTask(t, client)));
-    json(200, { tasks: enriched });
+    json(200, { tasks: await enrichAllTasks(stored, client) });
     return true;
   }
 
@@ -295,6 +296,31 @@ export async function handleTasksRoute(
     return true;
   }
 
+  const proofDownloadMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/proof\/download$/);
+  if (req.method === "GET" && proofDownloadMatch) {
+    const taskId = Number(proofDownloadMatch[1]);
+    const round = Number(url.searchParams.get("round") ?? "0");
+    const proof = await getProof(taskId, round);
+    if (!proof) {
+      json(404, { error: "Proof not found" });
+      return true;
+    }
+    try {
+      const file = await resolveProofFileDownload(proof);
+      const origin = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
+      res.writeHead(200, {
+        "content-type": file.mimeType,
+        "content-disposition": `attachment; filename="${file.fileName.replace(/"/g, "")}"`,
+        "content-length": String(file.bytes.length),
+        "access-control-allow-origin": origin,
+      });
+      res.end(file.bytes);
+    } catch (err) {
+      json(400, { error: err instanceof Error ? err.message : "Proof download failed" });
+    }
+    return true;
+  }
+
   const proofMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/proof$/);
   if (req.method === "GET" && proofMatch) {
     const taskId = Number(proofMatch[1]);
@@ -304,9 +330,12 @@ export async function handleTasksRoute(
       json(404, { error: "Proof not found" });
       return true;
     }
+    const payload = parseProofContent(proof.content);
     json(200, {
       ...proof,
-      recomputedHash: keccak256(toBytes(proof.content)),
+      submission: await describeProofForApi(proof),
+      onChainHash: proof.contentHash,
+      recomputedHash: payload.kind === "text" ? proofHash(payload) : proof.contentHash,
     });
     return true;
   }
@@ -314,68 +343,7 @@ export async function handleTasksRoute(
   const submitMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/submit$/);
   if (req.method === "POST" && submitMatch) {
     const taskId = Number(submitMatch[1]);
-    const input = body as { nullifierHash?: string; content?: string; link?: string };
-    if (!input.nullifierHash || !input.content) {
-      json(400, { error: "nullifierHash and content required" });
-      return true;
-    }
-
-    const worker = await findWorkerByNullifier(input.nullifierHash);
-    if (!worker) {
-      json(403, { error: "Worker not verified" });
-      return true;
-    }
-
-    const task = await getTask(taskId);
-    if (!task) {
-      json(404, { error: "Task not found" });
-      return true;
-    }
-
-    const onChain = await readOnChainTask(taskId, client);
-    if (onChain.state !== 2) {
-      json(409, { error: `Task is ${onChain.stateLabel}; submit only allowed when Assigned` });
-      return true;
-    }
-    if (nowSeconds() > onChain.submissionDeadline) {
-      json(409, { error: "Submission deadline has passed" });
-      return true;
-    }
-    if (onChain.assignedWorker.toLowerCase() !== worker.address.toLowerCase()) {
-      json(403, { error: "Worker is not assigned to this task" });
-      return true;
-    }
-
-    const payload = input.link ? `${input.content}\n${input.link}` : input.content;
-    const proofHash = keccak256(toBytes(payload));
-
-    const tx = await enqueueContractCall({
-      walletId: relayerWalletId,
-      kind: "submit_work",
-      expectedEvent: "WorkSubmitted",
-      contractAddress: escrowAddress,
-      abiFunctionSignature: "submitWork(uint256,bytes32)",
-      abiParameters: [taskId, proofHash],
-      taskId,
-      round: onChain.round,
-      worker: worker.address,
-    });
-
-    if (tx.status === "failed") {
-      json(502, { ...pendingHandle(tx), error: tx.error ?? "submitWork failed" });
-      return true;
-    }
-
-    await upsertProof({
-      taskId,
-      round: onChain.round,
-      content: payload,
-      contentHash: proofHash,
-      createdAt: new Date().toISOString(),
-    });
-
-    json(202, pendingHandle(tx));
-    return true;
+    return handleSubmitWork(req, res, taskId, json, body);
   }
 
   const bidsListMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/bids$/);

@@ -10,20 +10,27 @@
     "setup-relayer-wallet": "tsx scripts/setup-relayer-wallet.ts",
     "verify-usdc-transfer": "tsx scripts/verify-usdc-transfer.ts",
     "dev": "tsx src/server.ts",
-    "reconcile": "tsx scripts/reconcile-once.ts",
     "migrate-db-json": "tsx scripts/migrate-db-json-to-supabase.ts",
     "apply-pending-signals": "tsx scripts/apply-pending-signals.ts",
-    "test-revert-tracker": "tsx scripts/test-revert-tracker.ts",
+    "apply-agent-chats": "tsx scripts/apply-agent-chats.ts",
+    "probe-supabase": "tsx scripts/probe-supabase.ts",
+    "mcp": "tsx scripts/run-mcp.ts",
     "test-agent-budget": "tsx scripts/test-agent-budget.ts",
     "test-proof-eval": "tsx scripts/test-proof-eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.123.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "@circle-fin/developer-controlled-wallets": "10.8.0",
     "@supabase/supabase-js": "2.115.0",
     "@worldcoin/idkit-core": "4.2.2",
+    "@e965/xlsx": "0.20.3",
+    "@fastify/busboy": "3.2.2",
+    "mammoth": "1.12.0",
     "openai": "7.10.0",
-    "viem": "2.56.0"
+    "pdf-parse": "2.4.5",
+    "viem": "2.56.0",
+    "zod": "4.6.0"
   },
   "devDependencies": {
     "@types/node": "22.10.2",

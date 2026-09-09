@@ -6,16 +6,24 @@ export interface ProofVerdict {
   reason: string;
 }
 
-const EVAL_PROMPT = (taskDescription: string, proofContent: string) =>
+const EVAL_PROMPT = (
+  taskDescription: string,
+  proofContent: string,
+  submissionKind: "text" | "file" = "text",
+) =>
   `You are evaluating work submitted for a paid task on a human task marketplace.
 
 Task description:
 ${taskDescription}
 
+Submission format: ${submissionKind === "file" ? "file upload (content extracted below)" : "written text"}
+
 Submitted proof:
 ${proofContent}
 
-Decide whether this proof adequately completes the task. For the demo task "collect and summarize complaints from residents in this neighborhood", acceptable proof is free text summarizing complaints plus an optional link.
+Decide whether this proof adequately completes the task. Workers may submit either written text or a file (PDF, Word, Excel, CSV, plain text). Judge the substance — summaries, data, or documents that fulfill the task description should be approved even when the format differs from the example.
+
+For the demo task "collect and summarize complaints from residents in this neighborhood", acceptable proof is a written summary, a PDF/Word report, or a spreadsheet listing complaints.
 
 Respond with exactly two lines:
 VERDICT: APPROVE or REJECT
@@ -31,23 +39,31 @@ export function isProofEvaluationAvailable(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY);
 }
 
-async function evaluateWithAnthropic(taskDescription: string, proofContent: string): Promise<ProofVerdict> {
+async function evaluateWithAnthropic(
+  taskDescription: string,
+  proofContent: string,
+  submissionKind: "text" | "file",
+): Promise<ProofVerdict> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   const response = await client.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 512,
-    messages: [{ role: "user", content: EVAL_PROMPT(taskDescription, proofContent) }],
+    messages: [{ role: "user", content: EVAL_PROMPT(taskDescription, proofContent, submissionKind) }],
   });
   const text = response.content[0]?.type === "text" ? response.content[0].text : "";
   return parseVerdict(text);
 }
 
-async function evaluateWithOpenAI(taskDescription: string, proofContent: string): Promise<ProofVerdict> {
+async function evaluateWithOpenAI(
+  taskDescription: string,
+  proofContent: string,
+  submissionKind: "text" | "file",
+): Promise<ProofVerdict> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
   const response = await client.chat.completions.create({
     model: "gpt-4o",
     max_tokens: 512,
-    messages: [{ role: "user", content: EVAL_PROMPT(taskDescription, proofContent) }],
+    messages: [{ role: "user", content: EVAL_PROMPT(taskDescription, proofContent, submissionKind) }],
   });
   const text = response.choices[0]?.message?.content ?? "";
   return parseVerdict(text);
@@ -56,12 +72,13 @@ async function evaluateWithOpenAI(taskDescription: string, proofContent: string)
 export async function evaluateProof(
   taskDescription: string,
   proofContent: string,
+  submissionKind: "text" | "file" = "text",
 ): Promise<ProofVerdict> {
   if (process.env.ANTHROPIC_API_KEY) {
-    return evaluateWithAnthropic(taskDescription, proofContent);
+    return evaluateWithAnthropic(taskDescription, proofContent, submissionKind);
   }
   if (process.env.OPENAI_API_KEY) {
-    return evaluateWithOpenAI(taskDescription, proofContent);
+    return evaluateWithOpenAI(taskDescription, proofContent, submissionKind);
   }
   throw new Error("Proof evaluation requires ANTHROPIC_API_KEY or OPENAI_API_KEY in .env.local");
 }
