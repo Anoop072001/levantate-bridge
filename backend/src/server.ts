@@ -153,7 +153,7 @@ const server = createServer(async (req, res) => {
       });
 
       const signalToken = createSignalToken();
-      registerExpectedSignal(signalToken, signal);
+      await registerExpectedSignal(signalToken, signal);
 
       send(200, {
         sig,

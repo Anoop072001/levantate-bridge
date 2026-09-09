@@ -12,6 +12,7 @@
     "dev": "tsx src/server.ts",
     "reconcile": "tsx scripts/reconcile-once.ts",
     "migrate-db-json": "tsx scripts/migrate-db-json-to-supabase.ts",
+    "apply-pending-signals": "tsx scripts/apply-pending-signals.ts",
     "test-revert-tracker": "tsx scripts/test-revert-tracker.ts",
     "test-agent-budget": "tsx scripts/test-agent-budget.ts",
     "test-proof-eval": "tsx scripts/test-proof-eval.ts"

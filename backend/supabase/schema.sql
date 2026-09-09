@@ -77,6 +77,16 @@ create table if not exists spent_proofs (
   created_at     timestamptz not null default now()
 );
 
+-- RP signature sessions: binds the Selfie Check signal until the proof is submitted or TTL.
+create table if not exists pending_signals (
+  token      uuid        primary key,
+  signal     text        not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists pending_signals_expires_idx on pending_signals (expires_at);
+
 alter table workers              enable row level security;
 alter table tasks                enable row level security;
 alter table bids                 enable row level security;
@@ -84,3 +94,4 @@ alter table proofs               enable row level security;
 alter table relayed_transactions enable row level security;
 alter table linked_wallets       enable row level security;
 alter table spent_proofs         enable row level security;
+alter table pending_signals      enable row level security;

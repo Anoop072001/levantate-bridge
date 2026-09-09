@@ -40,6 +40,10 @@ export function BidSheet({
     task && (task.state === 0 || task.state === 1) && secondsRemaining(task.bidDeadline) > 0,
   );
   const bidAmountValid = canBid && bidMicro > 0 && bidMicro <= Number(task?.maxBudget ?? 0);
+  const payoutReady = Boolean(
+    session?.nullifierHash || (session?.walletAddress && session?.linkToken),
+  );
+  const needsWalletLink = ready && !payoutReady;
 
   const slides = useMemo(() => {
     if (!task) return [];
@@ -94,7 +98,6 @@ export function BidSheet({
       onSubmitted?.(tx);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Bid failed");
-      throw err;
     }
   }
 
@@ -242,7 +245,7 @@ export function BidSheet({
                     <SelfieCheckButton
                       signal={bidSignal(task.id, task.round, bidMicro)}
                       label="Selfie Check"
-                      disabled={!bidAmountValid}
+                      disabled={!bidAmountValid || needsWalletLink}
                       onVerified={handleBid}
                       onError={setActionError}
                       className="group flex cursor-pointer flex-col items-center gap-3 disabled:cursor-not-allowed disabled:opacity-40"
@@ -269,18 +272,25 @@ export function BidSheet({
                     </button>
                   </div>
 
-                  <p className="px-6 pb-6 text-center text-xs leading-relaxed text-muted-foreground">
+                  <p className="px-6 text-center text-xs leading-relaxed text-muted-foreground">
                     {!canBid
                       ? "Bidding is closed on this task."
-                      : ready && !session
-                        ? "Link a payout wallet on your first bid. Every bid still needs a fresh Selfie Check."
+                      : needsWalletLink
+                        ? "First step: tap Wallet, connect, and sign to link your payout address. Then enter an amount and run Selfie Check."
                         : `Enter an amount up to ${maxDisplay} USDC, then Selfie Check to submit.`}
                   </p>
-                </>
-              )}
 
-              {actionError && (
-                <p className="px-6 pb-6 text-center text-sm text-red-700">{actionError}</p>
+                  {actionError && (
+                    <p
+                      role="alert"
+                      className="mx-6 mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-center text-sm leading-relaxed text-red-800"
+                    >
+                      {actionError}
+                    </p>
+                  )}
+
+                  <div className="pb-6" />
+                </>
               )}
             </div>
           </motion.div>

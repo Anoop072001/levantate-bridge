@@ -124,14 +124,24 @@ export function SelfieCheckButton({
           allow_legacy_proofs
           environment="sandbox"
           preset={verificationPreset(issuedSignal)}
-          handleVerify={(result: IDKitResult) =>
-            onVerified({
-              rpId: config.rpId,
-              idkitResponse: result,
-              signal: issuedSignal,
-              signalToken,
-            })
-          }
+          handleVerify={async (result: IDKitResult) => {
+            try {
+              await Promise.resolve(
+                onVerified({
+                  rpId: config.rpId,
+                  idkitResponse: result,
+                  signal: issuedSignal,
+                  signalToken,
+                }),
+              );
+              setOpen(false);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : "Bid failed after Selfie Check";
+              onError?.(message);
+              setOpen(false);
+              // Do not rethrow — IDKit would replace this with "Verification declined".
+            }
+          }}
           onSuccess={() => setOpen(false)}
         />
       )}

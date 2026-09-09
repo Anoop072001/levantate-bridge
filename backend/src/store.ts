@@ -254,6 +254,36 @@ export async function deleteLinkedWallet(address: string): Promise<void> {
   if (error) fail("deleteLinkedWallet", error);
 }
 
+export async function insertPendingSignal(
+  token: string,
+  signal: string,
+  expiresAt: string,
+): Promise<void> {
+  const { error } = await getSupabase().from("pending_signals").insert({
+    token,
+    signal,
+    expires_at: expiresAt,
+    created_at: new Date().toISOString(),
+  });
+  if (error) fail("insertPendingSignal", error);
+}
+
+/** Single-use: deletes the row and returns whether the signal matched and had not expired. */
+export async function consumePendingSignal(token: string, signal: string): Promise<boolean> {
+  const { data, error } = await getSupabase()
+    .from("pending_signals")
+    .select("signal, expires_at")
+    .eq("token", token)
+    .maybeSingle<{ signal: string; expires_at: string }>();
+  if (error) fail("consumePendingSignal", error);
+  if (!data) return false;
+
+  await getSupabase().from("pending_signals").delete().eq("token", token);
+
+  if (new Date(data.expires_at).getTime() <= Date.now()) return false;
+  return data.signal === signal;
+}
+
 /** Returns false if this proof was already spent. */
 export async function trySpendProof(
   fingerprint: string,

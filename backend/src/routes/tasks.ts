@@ -170,14 +170,33 @@ export async function handleTasksRoute(
       return true;
     }
 
-    if (input.walletAddress) {
+    const walletAddress = input.walletAddress?.trim();
+    const linkToken = input.linkToken?.trim();
+
+    if (walletAddress) {
       const duplicateHint = (await listBidsForTask(taskId, onChain.round)).some(
         (b) =>
-          b.workerAddress.toLowerCase() === input.walletAddress!.toLowerCase() &&
-          b.amount === amountStr,
+          b.workerAddress.toLowerCase() === walletAddress.toLowerCase() && b.amount === amountStr,
       );
       if (duplicateHint) {
         json(409, { error: "You already placed a bid for this amount on this task" });
+        return true;
+      }
+    }
+
+    const existingWorker = walletAddress ? await findWorkerByAddress(walletAddress) : undefined;
+    if (!existingWorker) {
+      if (!walletAddress || !linkToken) {
+        json(403, {
+          error:
+            "Link a payout wallet before Selfie Check — your first bid binds that address to your World ID",
+        });
+        return true;
+      }
+
+      const linked = await findLinkedWallet(walletAddress, linkToken);
+      if (!linked) {
+        json(403, { error: "Wallet link expired or invalid — connect your wallet and sign again" });
         return true;
       }
     }
@@ -196,18 +215,12 @@ export async function handleTasksRoute(
     // Identity is read out of the proof. A stored session cannot bid for someone else.
     let worker = await findWorkerByNullifier(proof.nullifierHash);
     if (!worker) {
-      const walletAddress = input.walletAddress?.trim();
-      const linkToken = input.linkToken?.trim();
+      // Wallet link was validated before verifySelfieCheck so a spent proof is never wasted here.
       if (!walletAddress || !linkToken) {
         json(403, {
-          error: "Connect a payout wallet before your first bid — Selfie Check alone has nowhere to send USDC",
+          error:
+            "Link a payout wallet before Selfie Check — your first bid binds that address to your World ID",
         });
-        return true;
-      }
-
-      const linked = await findLinkedWallet(walletAddress, linkToken);
-      if (!linked) {
-        json(403, { error: "Wallet link expired or invalid — connect your wallet again" });
         return true;
       }
 
