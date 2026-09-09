@@ -8,7 +8,7 @@ import {
 } from "../store.js";
 import { syncStoredTaskFromChain } from "./sync-task.js";
 
-const POLL_MS = 5_000;
+const POLL_MS = 8_000;
 const CONFIRM_TIMEOUT_MS = 120_000;
 
 const ESCROW_EVENTS = new Set([

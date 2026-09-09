@@ -3,11 +3,14 @@
 import { IDKitRequestWidget, type IDKitResult, type RpContext } from "@worldcoin/idkit";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { backendUrl, worldAppId, worldRpId } from "@/lib/config";
+import { backendUrl } from "@/lib/config";
+import { setWorkerSession } from "@/lib/worker-session";
 import { verificationPreset } from "@/lib/world-id-preset";
 
-const appId = worldAppId as `app_${string}`;
-const rpId = worldRpId as `rp_${string}`;
+interface WorldIdConfig {
+  appId: string;
+  rpId: string;
+}
 
 interface RpSignatureResponse {
   sig: string;
@@ -25,6 +28,8 @@ function VerifyContent() {
   const searchParams = useSearchParams();
   const signalParam = searchParams.get("signal") ?? "demo-task-0-round-0";
 
+  const [config, setConfig] = useState<WorldIdConfig | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [rpContext, setRpContext] = useState<RpContext | null>(null);
   const [action, setAction] = useState("");
@@ -34,7 +39,21 @@ function VerifyContent() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    fetch(`${backendUrl}/api/world-id/config`)
+      .then(async (res) => {
+        const data = (await res.json()) as WorldIdConfig & { error?: string };
+        if (!res.ok) throw new Error(data.error ?? "Failed to load World ID config");
+        if (!data.appId || !data.rpId) throw new Error("Backend returned empty World ID config");
+        setConfig({ appId: data.appId, rpId: data.rpId });
+      })
+      .catch((err) => {
+        setConfigError(err instanceof Error ? err.message : "Could not load World ID config");
+      });
+  }, []);
+
   const prepare = useCallback(async () => {
+    if (!config) return;
     setLoading(true);
     setError(null);
     setStatus(null);
@@ -63,20 +82,15 @@ function VerifyContent() {
     } finally {
       setLoading(false);
     }
-  }, [signalParam]);
-
-  useEffect(() => {
-    if (!appId || !rpId) {
-      setError("Set NEXT_PUBLIC_WORLD_APP_ID and NEXT_PUBLIC_WORLD_RP_ID in .env.local");
-    }
-  }, [appId, rpId]);
+  }, [config, signalParam]);
 
   const handleVerify = async (result: IDKitResult) => {
+    if (!config) return;
     const res = await fetch(`${backendUrl}/api/world-id/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        rp_id: rpId,
+        rp_id: config.rpId,
         idkitResponse: result,
         signal,
         signal_token: signalToken,
@@ -85,12 +99,25 @@ function VerifyContent() {
     const data = (await res.json()) as {
       error?: string;
       walletAddress?: string;
+      nullifierHash?: string;
     };
     if (!res.ok) {
       throw new Error(data.error ?? "Backend verification failed");
     }
+    if (data.nullifierHash && data.walletAddress) {
+      setWorkerSession({
+        nullifierHash: data.nullifierHash,
+        walletAddress: data.walletAddress,
+      });
+    }
     setStatus(`Verified — worker wallet ${data.walletAddress}`);
+    const returnTo = searchParams.get("return");
+    if (returnTo?.startsWith("/")) {
+      window.location.href = returnTo;
+    }
   };
+
+  const ready = Boolean(config?.appId && config?.rpId);
 
   return (
     <main style={{ maxWidth: 640, margin: "4rem auto", padding: "0 1rem", fontFamily: "system-ui" }}>
@@ -99,22 +126,24 @@ function VerifyContent() {
         Bid signal: <code>{signalParam}</code>
       </p>
       <p style={{ color: "#666", fontSize: "0.9rem" }}>
-        Uses <code>orbLegacy</code> preset until Selfie Check access is granted — swap in{" "}
-        <code>lib/world-id-preset.ts</code>.
+        Selfie Check (sandbox). Complete verification in the World App on your phone.
       </p>
 
-      <button type="button" onClick={prepare} disabled={loading || !appId || !rpId}>
+      {!config && !configError && <p>Loading World ID config…</p>}
+
+      <button type="button" onClick={prepare} disabled={loading || !ready}>
         {loading ? "Preparing…" : "Verify with World ID"}
       </button>
 
+      {configError && <p style={{ color: "crimson" }}>{configError}</p>}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {status && <p style={{ color: "green" }}>{status}</p>}
 
-      {rpContext && appId && action && (
+      {rpContext && config && action && (
         <IDKitRequestWidget
           open={open}
           onOpenChange={setOpen}
-          app_id={appId}
+          app_id={config.appId as `app_${string}`}
           action={action}
           rp_context={rpContext}
           allow_legacy_proofs

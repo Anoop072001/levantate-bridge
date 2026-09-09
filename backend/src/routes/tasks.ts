@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { keccak256, toBytes } from "viem";
+import { readUsdcBalance } from "../chain/usdc-balance.js";
 import { createArcPublicClient, getEscrowAddress, getEscrowContract, getUsdcAddress } from "../chain/escrow.js";
-import { nowSeconds, readOnChainTask, TASK_STATE } from "../chain/task-state.js";
+import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
 import { requireEnv } from "../env.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
 import {
@@ -15,7 +16,24 @@ import {
   listTasks,
   upsertProof,
   upsertTask,
+  type TaskRecord,
 } from "../store.js";
+
+async function enrichTask(t: TaskRecord, client: ReturnType<typeof createArcPublicClient>) {
+  const onChain = await readOnChainTask(t.id, client);
+  return {
+    ...t,
+    bidDeadline: onChain.bidDeadline.toString(),
+    submissionWindow: onChain.submissionWindow.toString(),
+    submissionDeadline: onChain.submissionDeadline.toString(),
+    round: onChain.round,
+    state: onChain.state,
+    stateLabel: onChain.stateLabel,
+    assignedWorker: onChain.assignedWorker,
+    currentRoundBidCount: onChain.currentRoundBidCount.toString(),
+    maxBudget: onChain.maxBudget.toString(),
+  };
+}
 
 async function agentContractCall(
   json: (status: number, payload: unknown) => void,
@@ -45,24 +63,29 @@ export async function handleTasksRoute(
   const relayerWalletId = requireEnv("CIRCLE_RELAYER_WALLET_ID");
 
   if (req.method === "GET" && url.pathname === "/api/tasks") {
-    const escrow = getEscrowContract(client);
     const stored = listTasks();
-    const enriched = await Promise.all(
-      stored.map(async (t) => {
-        const onChain = await escrow.read.tasks([BigInt(t.id)]);
-        const stateNum = Number(onChain[6]);
-        return {
-          ...t,
-          bidDeadline: onChain[2].toString(),
-          submissionWindow: onChain[3].toString(),
-          submissionDeadline: onChain[4].toString(),
-          round: Number(onChain[5]),
-          state: stateNum,
-          stateLabel: TASK_STATE[stateNum] ?? "Unknown",
-        };
-      }),
-    );
+    const enriched = await Promise.all(stored.map((t) => enrichTask(t, client)));
     json(200, { tasks: enriched });
+    return true;
+  }
+
+  const taskDetailMatch = url.pathname.match(/^\/api\/tasks\/(\d+)$/);
+  if (req.method === "GET" && taskDetailMatch) {
+    const taskId = Number(taskDetailMatch[1]);
+    const stored = getTask(taskId);
+    if (!stored) {
+      json(404, { error: "Task not found" });
+      return true;
+    }
+    json(200, { task: await enrichTask(stored, client) });
+    return true;
+  }
+
+  const workerBalanceMatch = url.pathname.match(/^\/api\/workers\/(0x[a-fA-F0-9]{40})\/balance$/);
+  if (req.method === "GET" && workerBalanceMatch) {
+    const address = workerBalanceMatch[1] as `0x${string}`;
+    const balance = await readUsdcBalance(address, client);
+    json(200, { address, usdcBalance: balance.toString() });
     return true;
   }
 
@@ -164,6 +187,16 @@ export async function handleTasksRoute(
     }
     if (BigInt(input.amount) > onChain.maxBudget) {
       json(400, { error: "Bid exceeds max budget" });
+      return true;
+    }
+
+    const amountStr = BigInt(input.amount).toString();
+    const duplicate = listBidsForTask(taskId, onChain.round).some(
+      (b) =>
+        b.workerAddress.toLowerCase() === worker.address.toLowerCase() && b.amount === amountStr,
+    );
+    if (duplicate) {
+      json(409, { error: "You already placed a bid for this amount on this task" });
       return true;
     }
 
@@ -477,12 +510,25 @@ export async function handleTasksRoute(
       json(409, { error: `Task is ${onChain.stateLabel}; cancel requires Open or Bidding` });
       return true;
     }
-    if (nowSeconds() <= onChain.bidDeadline) {
-      json(409, { error: "Bid deadline has not passed yet" });
-      return true;
-    }
-    if (onChain.currentRoundBidCount > 0n) {
-      json(409, { error: "Task has bids in the current round" });
+
+    const useAbort =
+      onChain.currentRoundBidCount > 0n || nowSeconds() <= onChain.bidDeadline;
+
+    if (useAbort) {
+      await agentContractCall(
+        json,
+        {
+          walletId: agentWalletId,
+          kind: "abort_task",
+          expectedEvent: "TaskCancelled",
+          contractAddress: escrowAddress,
+          abiFunctionSignature: "abortTask(uint256)",
+          abiParameters: [taskId],
+          taskId,
+          round: onChain.round,
+        },
+        "abortTask",
+      );
       return true;
     }
 

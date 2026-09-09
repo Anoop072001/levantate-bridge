@@ -332,6 +332,34 @@ contract TaskEscrowTest is Test {
         ));
     }
 
+    function test_duplicateBidAmountReverts() public {
+        uint256 taskId = _postTask(1 hours, BUDGET);
+        _placeBid(taskId, worker1, 500_000);
+        vm.prank(relayer);
+        vm.expectRevert(TaskEscrow.DuplicateBidAmount.selector);
+        escrow.placeBid(taskId, worker1, 500_000);
+    }
+
+    function test_sameWorkerDifferentAmountsAllowed() public {
+        uint256 taskId = _postTask(1 hours, BUDGET);
+        _placeBid(taskId, worker1, 500_000);
+        vm.prank(relayer);
+        uint256 bidId = escrow.placeBid(taskId, worker1, 600_000);
+        assertEq(bidId, 1);
+    }
+
+    function test_abortTaskWithBidsRefundsAgent() public {
+        uint256 taskId = _postTask(1 hours, BUDGET);
+        _placeBid(taskId, worker1, 500_000);
+        _placeBid(taskId, worker2, 600_000);
+
+        uint256 agentBefore = usdc.balanceOf(agent);
+        vm.prank(agent);
+        escrow.abortTask(taskId);
+        assertEq(uint256(_taskState(taskId)), uint256(TaskEscrow.TaskState.Cancelled));
+        assertEq(usdc.balanceOf(agent), agentBefore + BUDGET);
+    }
+
     function test_reclaimAndCancelEmitEvents() public {
         uint256 taskId = _postTask(1 hours, BUDGET);
         uint256 bidId = _placeBid(taskId, worker1, 500_000);

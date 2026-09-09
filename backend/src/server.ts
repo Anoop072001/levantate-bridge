@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { loadRootEnv, requireEnv } from "./env.js";
 import { createWorkerWallet } from "./circle/create-worker-wallet.js";
+import { handleAgentRoute, startAgentLoop } from "./routes/agent.js";
 import { handleTasksRoute } from "./routes/tasks.js";
 import { extractNullifierHash } from "./world-id/nullifier.js";
 import {
@@ -15,6 +16,7 @@ import { findWorkerByNullifier, insertWorker } from "./store.js";
 
 loadRootEnv();
 startConfirmationReconciler();
+startAgentLoop();
 
 const PORT = Number(process.env.BACKEND_PORT ?? 3001);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
@@ -56,9 +58,22 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/world-id/config") {
+    try {
+      send(200, {
+        appId: requireEnv("WORLD_APP_ID"),
+        rpId: requireEnv("WORLD_RP_ID"),
+      });
+    } catch (err) {
+      send(500, { error: err instanceof Error ? err.message : "World ID not configured" });
+    }
+    return;
+  }
+
   const body = req.method === "POST" ? await readBody(req) : undefined;
 
   try {
+    if (await handleAgentRoute(req, res, url, body, send)) return;
     if (await handleTasksRoute(req, res, url, body, send)) return;
   } catch (err) {
     send(500, { error: err instanceof Error ? err.message : "Request failed" });

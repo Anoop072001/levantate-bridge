@@ -8,9 +8,9 @@ dataSources:
     name: TaskEscrow
     network: arc-testnet
     source:
-      address: "0x4f75bea0a2d3a8e494161f115ecdcb9f18175806"
+      address: "0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52"
       abi: TaskEscrow
-      startBlock: 61137121
+      startBlock: 61231705
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9

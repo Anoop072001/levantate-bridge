@@ -48,6 +48,8 @@ contract TaskEscrow is ReentrancyGuard {
     mapping(uint256 taskId => Task) public tasks;
     mapping(uint256 bidId => Bid) public bids;
     mapping(uint256 taskId => mapping(address worker => bool barred)) public barredWorkers;
+    /// @dev taskId => round => worker => amount => already bid
+    mapping(uint256 => mapping(uint256 => mapping(address => mapping(uint256 => bool)))) public workerAmountBid;
 
     event TaskPosted(
         uint256 indexed taskId,
@@ -125,6 +127,7 @@ contract TaskEscrow is ReentrancyGuard {
     error InvalidBid();
     error NoBidsInRound();
     error ZeroBudget();
+    error DuplicateBidAmount();
 
     modifier onlyAgent() {
         if (msg.sender != agent) revert NotAgent();
@@ -180,10 +183,13 @@ contract TaskEscrow is ReentrancyGuard {
         if (block.timestamp > task.bidDeadline) revert BidDeadlinePassed();
         if (amount == 0 || amount > task.maxBudget) revert BidTooHigh();
         if (barredWorkers[taskId][worker]) revert WorkerBarred();
+        if (workerAmountBid[taskId][task.round][worker][amount]) revert DuplicateBidAmount();
 
         if (task.state == TaskState.Open) {
             task.state = TaskState.Bidding;
         }
+
+        workerAmountBid[taskId][task.round][worker][amount] = true;
 
         bidId = nextBidId++;
         bids[bidId] = Bid({worker: worker, amount: amount, round: task.round, exists: true});
@@ -288,6 +294,22 @@ contract TaskEscrow is ReentrancyGuard {
 
         bool refunded = usdc.transfer(agent, refundAmount);
         require(refunded, "cancel refund failed");
+
+        emit TaskCancelled(taskId, agent, refundAmount, task.round);
+    }
+
+    /// @notice Agent aborts a task in Open/Bidding and refunds escrow even when bids exist.
+    function abortTask(uint256 taskId) external onlyAgent nonReentrant {
+        Task storage task = tasks[taskId];
+        if (task.state != TaskState.Open && task.state != TaskState.Bidding) {
+            revert InvalidState();
+        }
+
+        uint256 refundAmount = task.maxBudget;
+        task.state = TaskState.Cancelled;
+
+        bool refunded = usdc.transfer(agent, refundAmount);
+        require(refunded, "abort refund failed");
 
         emit TaskCancelled(taskId, agent, refundAmount, task.round);
     }
