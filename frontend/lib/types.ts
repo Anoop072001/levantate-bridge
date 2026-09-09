@@ -24,8 +24,11 @@ export interface RelayedTransaction {
 }
 
 export interface WorkerSession {
-  nullifierHash: string;
   walletAddress: string;
+  /** Present after the first successful bid (or after reconnecting an already-bound wallet). */
+  nullifierHash?: string;
+  /** Present after linking a wallet that has not yet been bound to a World ID. */
+  linkToken?: string;
 }
 
 export interface Bid {

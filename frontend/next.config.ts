@@ -6,6 +6,10 @@ import { resolve } from "node:path";
 const repoRoot = resolve(import.meta.dirname, "..");
 loadEnvConfig(repoRoot);
 
+const x402Stubs: Record<string, string> = {
+  "@base-org/account": "./lib/base-org-account-stub.ts",
+};
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   env: {
@@ -14,6 +18,23 @@ const nextConfig: NextConfig = {
       process.env.NEXT_PUBLIC_WORLD_APP_ID ?? process.env.WORLD_APP_ID ?? "",
     NEXT_PUBLIC_WORLD_RP_ID:
       process.env.NEXT_PUBLIC_WORLD_RP_ID ?? process.env.WORLD_RP_ID ?? "",
+    NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:
+      process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
+    NEXT_PUBLIC_ARC_RPC_URL: process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.io",
+  },
+  // RainbowKit's main bundle imports Coinbase Base Account, which dynamically
+  // requires optional x402/Solana clients we do not use on Arc.
+  turbopack: {
+    resolveAlias: x402Stubs,
+  },
+  webpack: (config) => {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      ...Object.fromEntries(
+        Object.entries(x402Stubs).map(([pkg, rel]) => [pkg, resolve(import.meta.dirname, rel)]),
+      ),
+    };
+    return config;
   },
 };
 

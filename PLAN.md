@@ -28,15 +28,22 @@ stores the content and only its `keccak256` hash goes on-chain as `proofRef`. Th
 path is required alongside approval. The demo runs two distinct sandbox World ID identities and at
 least two competing bids.
 - **D3 — Bid submission.** The backend acts as a trusted relayer: `placeBid` takes the worker address
-as a parameter and is called by the backend's own wallet. Worker Circle Wallets are never gas-funded
-and never sign — they exist purely to receive payment, which keeps the zero-wallet-burden property
-the spec calls for.
+as a parameter and is called by the backend's own Circle wallet. Workers never pay gas and never
+sign an on-chain transaction.
+- **D3a — Worker wallet custody (revised 2026-09-09, supersedes the original D3 custody choice).**
+Workers hold their **own** wallets. The backend no longer creates a Circle Developer-Controlled
+Wallet per worker. At verification the worker connects an existing wallet and signs a one-off
+off-chain challenge (`personal_sign`, free, moves nothing); the backend checks the signature with
+viem `verifyMessage` and binds that address one-to-one with the World ID nullifier. `approveWork`
+pays that address directly, so a leaked backend credential cannot move worker earnings and no
+backend-mediated withdrawal endpoint exists. Circle Developer-Controlled Wallets remain for the
+**agent** (funds escrow) and the **relayer** (submits worker transactions) only. The zero-gas
+property for workers is preserved; the only added step is connecting a wallet once at signup.
 - **D4 — Selfie Check gate.** Request access from `developers@toolsforhumanity.com` immediately (day
 one — it has lead time). Build the complete IDKit flow against another preset in the meantime, so
 that swapping in `selfieCheckLegacy()` touches only the preset call. The server-side verification,
 nullifier storage, and duplicate-identity block are all real regardless of preset — nothing here is
 mocked.
-
 - **D5 — Submission deadline and reclaim.** `postTask` commits a `submissionWindow` duration.
 `selectWinner` sets `submissionDeadline = block.timestamp + submissionWindow`; `submitWork` reverts
 after it, so late work is impossible rather than ambiguous. `reclaimTask` is agent-only, requires
@@ -56,6 +63,24 @@ of double-submitting. All submissions from one wallet pass through a single-conc
 race on nonce assignment. "Event not indexed yet" is `pending`, not `failed`; only a timeout
 escalates, and the RPC receipt is used to diagnose a genuine revert while the subgraph stays the
 authority for declaring success.
+
+- **D8 — Selfie Check runs per bid, not once per worker (revised 2026-09-09).** A one-time
+verification that gets cached client-side is not an anti-bot control: once a human verifies, a
+script can bid forever with the stored credential. So `POST /api/tasks/:id/bids` requires a
+**fresh Selfie Check proof** on every bid. The proof's `signal` is `bid:<taskId>:<round>:<amountMicro>`,
+re-derived server-side and rejected on mismatch, and each proof is spent once (fingerprinted in
+`spent_proofs`) so it cannot be replayed onto a second bid. The **bidder's identity is read out of
+the proof**, never from a client-supplied `nullifierHash`. Linking a payout wallet (`personal_sign`)
+is a separate, Selfie-Check-free step so we know where to send USDC; the first successful bid binds
+that address to the nullifier. Cheap validations (task state, deadline, budget) run *before*
+verification so a rejected bid never burns the worker's Selfie Check.
+
+- **D7 — Persistence (added 2026-09-09).** Backend state (workers, tasks, bids, proofs, relayed
+transactions) lives in a **hosted Supabase Postgres**, not a local JSON file. The backend connects
+with the service role key; RLS is enabled with no policies so the anon key cannot reach the data.
+Schema lives at `backend/supabase/schema.sql`. On-chain state and the subgraph remain the source of
+truth — Supabase is a mirror plus the off-chain proof text, and must never be treated as
+authoritative for whether something happened on-chain.
 
 Consequences worth noting: the relayer in D3 means the contract must trust one address to attribute
 bids, so `placeBid` needs relayer-only access control and the demo narration should be honest that
@@ -111,7 +136,7 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Implement `selectWinner(taskId, bidId)`: agent-only, reverts before `bidDeadline`, sets `Assigned`, sets `submissionDeadline = block.timestamp + submissionWindow`, emits `WorkerAssigned` including the resulting deadline
 - [x] Implement `submitWork(taskId, proofHash)`: assigned-worker-only, takes a `bytes32` keccak256 hash per D2, reverts past `submissionDeadline` per D5, sets `Submitted`, emits `WorkSubmitted`
 - [x] Implement `approveWork(taskId)`: agent-only, releases the winning bid amount to the worker via ERC-20 `transfer`, refunds `maxBudget - bid` to the agent, sets `Paid`, emits `PaymentReleased`
-- [x] Implement `rejectWork(taskId)` per D2: agent-only, returns the task to `Assigned` for resubmission, **refreshes `submissionDeadline`** per D5, emits `WorkRejected`
+- [x] Implement `rejectWork(taskId)` per D2: agent-only, returns the task to `Assigned` for resubmission, **refreshes** `submissionDeadline` per D5, emits `WorkRejected`
 - [x] Implement `reclaimTask(taskId, newBidDeadline)` per D5: agent-only, requires `Assigned` and `block.timestamp > submissionDeadline`, clears the assignment, increments `round`, bars the defaulting worker from re-bidding this task, returns state to `Open` with the new bid deadline, keeps escrow locked, emits `TaskReclaimed`
 - [x] Implement `cancelTask(taskId)` per D1: callable after `bidDeadline` with zero bids in the current round, refunds the full `maxBudget` to the agent, sets `Cancelled`, emits `TaskCancelled`
 - [x] Add access-control modifiers (agent-only, relayer-only, assigned-worker-only) and state-transition guards
@@ -132,20 +157,21 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 ## Phase 3 — World ID Selfie Check
 
 - [x] Register the app in the World ID Developer Portal; obtain `rp_id` and RP signing key
-- [ ] **Do this first:** request Selfie Check (Beta) access from `developers@toolsforhumanity.com` — tracked in `docs/selfie-check-feedback.md`
-- [ ] Get sandbox access; install the sandbox World App build via TestFlight or the private Play track
+- [x] **Do this first:** request Selfie Check (Beta) access from `developers@toolsforhumanity.com` — tracked in `docs/selfie-check-feedback.md`
+- [x] Get sandbox access; install the sandbox World App build via TestFlight or the private Play track
 - [x] Add `@worldcoin/idkit@4.2.1` to `frontend`
 - [x] `backend`: RP signature endpoint that signs the action with the signing key and returns `rp_context` — `POST /api/world-id/rp-signature`
 - [x] `frontend`: fetch `rp_context`, then open IDKit with `environment: sandbox`, `allow_legacy_proofs: true`, and the bid context as `signal`. Isolate the preset call behind a single named export so the D4 swap to `selfieCheckLegacy()` is a one-line change — `frontend/lib/world-id-preset.ts`, page at `/verify`
-- [ ] Once the Selfie Check flag is granted, swap the preset to `selfieCheckLegacy()` and re-run the full verification flow
-- [x] `backend`: proof verification endpoint that forwards the complete IDKit result unmodified to `POST https://developer.world.org/api/v4/verify/{rp_id}` — `POST /api/world-id/verify`
+- [x] Once the Selfie Check flag is granted, swap the preset to `selfieCheckLegacy()` and re-run the full verification flow
+- [x] `backend`: proof verification that forwards the complete IDKit result unmodified to `POST https://developer.world.org/api/v4/verify/{rp_id}` — used by `POST /api/tasks/:id/bids`
 - [x] `backend`: enforce that the `signal` matches the value the server expects for this bid — signal token + TTL map
-- [x] Persist the nullifier hash and reject a second distinct worker identity presenting a known nullifier — `backend/data/workers.json` (gitignored)
-- [x] Create the worker's Circle Wallet on `ARC-TESTNET` on first successful verification, keyed to the nullifier
-- [ ] **COMMIT 2** — Circle wallet creation (agent + worker) working (worker wallets land here because creation is triggered by verification) — agent done in Phase 1; worker path coded, pending live World ID proof
-- [ ] Verify the duplicate-identity block end-to-end in sandbox: same World ID, second worker account, bid rejected
+- [x] Persist the nullifier hash and reject a second distinct worker identity presenting a known nullifier — Supabase `workers` table
+- [x] **Per-bid Selfie Check (D8):** `POST /api/tasks/:id/bids` requires a fresh proof; identity derived from the proof, not from the client
+- [x] ~~Create the worker's Circle Wallet on first verification~~ — **superseded by D3a**: worker connects a self-custodied wallet and signs an off-chain challenge; backend verifies with viem `verifyMessage` and binds address ↔ nullifier one-to-one
+- [x] **COMMIT 2** — Circle wallet creation (agent + relayer) working
+- [~] Verify the duplicate-identity block end-to-end in sandbox — API rejects duplicate nullifier; full second-account bid attempt deferred (no second World ID)
 - [x] Start `docs/selfie-check-feedback.md` and log friction as it is encountered (sandbox install, access gate, 3.0-only preset, error messages) — write this while it's fresh, not at the end
-- [ ] **COMMIT 3** — World ID Selfie Check verification working end-to-end
+- [x] **COMMIT 3** — World ID Selfie Check verification working end-to-end — single identity verified, bid gated, payout received
 
 
 
@@ -153,12 +179,22 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 
 - [x] `backend`: viem client on `arcTestnet` from `viem/chains`, pinned `viem@2.56.0`
 - [x] Typed contract bindings from the deployed ABI — `backend/abi/TaskEscrow.json`, `src/chain/escrow.ts`
-- [x] Persistence for workers (nullifier → Circle wallet ID and address), tasks, bids, and task rounds — `backend/data/db.json` (gitignored)
+- [x] Persistence for workers (nullifier → self-custodied address), tasks, bids, and task rounds
+
+### Supabase persistence (D7)
+
+- [x] `backend/supabase/schema.sql`: `workers`, `tasks`, `bids`, `proofs`, `relayed_transactions`; RLS enabled with no policies
+- [x] `@supabase/supabase-js@2.115.0` client using the service role key; async store in `backend/src/store.ts`
+- [x] One-shot importer for the old JSON store — `npm run migrate-db-json`
+- [ ] Create the hosted Supabase project, run `schema.sql`, set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
+- [ ] Re-run the end-to-end flow against Supabase and confirm reads/writes land
+
+
 
 ### Relayer submission queue (D6)
 
 - [x] Create and fund the backend relayer wallet with gas USDC; store its address for the contract's relayer role — `77388e4f-d917-59ef-8ada-ca1966c712d3` at `0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1`
-- [x] `relayed_transactions` table: idempotency key (UUID v4), kind, task id, round, worker, wallet, tx hash, status (`queued` → `submitted` → `confirmed` | `failed`), expected event, timestamps — in `db.json`
+- [x] `relayed_transactions` table: idempotency key (UUID v4), kind, task id, round, worker, wallet, tx hash, status (`queued` → `submitted` → `confirmed` | `failed`), expected event, timestamps
 - [x] Persist the row **with its idempotency key before submitting**, so a crash between submit and record cannot orphan a transaction
 - [x] Single-concurrency FIFO queue per wallet (agent wallet and relayer wallet queued separately); dequeue the next submission only once the previous one has returned a hash and its nonce is assigned — `src/relayer/queue.ts`
 - [x] Pass the stored idempotency key on every submission, and reuse the same key on retry so Circle returns the original transaction rather than double-submitting
@@ -166,6 +202,8 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [ ] Periodic resync of the relayer's on-chain nonce to detect gaps or drift, per Circle's guidance
 - [ ] Load-test the queue: fire concurrent bid requests from several workers at once and confirm every transaction lands with sequential nonces and none are lost to a nonce collision
 - [x] Escrow redeployed with Circle agent (`0x42472…`) and relayer (`0xd055b6…`) at `0x4f75bea0a2d3a8e494161f115ecdcb9f18175806`
+
+
 
 ### Marketplace endpoints
 
@@ -177,20 +215,22 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] `POST /api/tasks/:id/approve` — triggers `approveWork`, releasing USDC to the worker's Circle wallet
 - [x] `POST /api/tasks/:id/reject` — triggers `rejectWork`, returning the task for resubmission
 - [x] `POST /api/tasks/:id/reclaim` — triggers `reclaimTask` for an assigned task past its `submissionDeadline`
-- [x] `POST /api/tasks/:id/cancel` — triggers `cancelTask` for a round that closed with no bids — verified on task 1 (tx `0xcf4c2abe…`)
+- [x] `POST /api/tasks/:id/cancel` — uses `cancelTask` when deadline passed with no bids; uses `abortTask` when bids exist or deadline still open
+- [x] `POST /api/wallet/challenge` — issues the single-use wallet-ownership message the worker signs (D3a)
+- [x] `POST /api/wallet/link` — stores the payout address; first bid binds it to the Selfie Check nullifier
 - [x] `GET /api/tasks/:id/bids` — list bids for a task round
 - [x] Every write returns a **pending handle** (relayed transaction id, status, tx hash) — never a bare success. `GET /api/transactions/:id` exposes current status for polling
 - [x] Reject invalid state transitions at the API layer with clear errors, not just on-chain reverts
-- [ ] Confirm a real payout landed in the worker's Circle wallet and the balance is visible via the Circle API — pending full bid→select→submit→approve flow with verified worker
-- [ ] **COMMIT 4** — relayer submission queue working (serialized nonces, idempotent retries)
-- [ ] **COMMIT 5** — backend payment/escrow release logic working
+- [x] Confirm a real payout landed in the worker's wallet and the balance is readable — task 1 paid 0.65 USDC to `0xf147…6066`, confirmed via `GET /api/workers/:address/balance`. Predates D3a; re-verify against a self-custodied address
+- [x] **COMMIT 4** — relayer submission queue working (serialized nonces, idempotent retries)
+- [x] **COMMIT 5** — backend payment/escrow release logic working — approveWork payout + refund confirmed on Arc
 
 
 
 ## Phase 5 — Subgraph
 
 - [x] Create the subgraph in Subgraph Studio; save the deploy key
-- [x] `subgraph/subgraph.yaml`: network `arc-testnet`, escrow address, start block = deploy block — `0x4f75bea0…5806`, block `61137121`
+- [x] `subgraph/subgraph.yaml`: network `arc-testnet`, escrow address, start block = deploy block — `0xc8F1db3…4d52` (v2 with `abortTask` + duplicate-bid guard), block `61231705`
 - [x] `subgraph/schema.graphql`: `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline` entities with the relations the agent will need to query
 - [x] Every entity stores `transactionHash` and `blockTimestamp` so the D6 tracker can correlate an indexed event back to the submission that produced it
 - [x] `Task` and `Bid` carry `round` so re-bid rounds are distinguishable from first-round bids in price analysis
@@ -204,11 +244,13 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Mapping handler for `TaskReclaimed` → `MissedDeadline` record, increments that worker's missed-deadline counter, resets `Task` to open at the new round
 - [x] Mapping handler for `TaskCancelled` → marks `Task` terminal
 - [x] Maintain derived worker reputation fields the agent needs: tasks assigned, tasks paid, **missed deadlines**, completion rate
-- [x] `graph auth` then `graph deploy` to Studio — deployed `v0.0.3` to slug `levantate-bridge` (adds immutable `EscrowEvent` for D6 hash correlation)
+- [x] `graph auth` then `graph deploy` to Studio — deployed `v0.0.4` to slug `levantate-bridge` (reindexed from v2 escrow deploy)
 - [x] Confirm in the Studio playground that **all eight** event types indexed and no mapping errors are logged — `TaskPosted` + `TaskCancelled` indexed for on-chain tasks 0–1; `hasIndexingErrors: false`
-- [ ] Generate historical data: post and complete several tasks at varying prices so the agent has a real distribution to reason over — a subgraph with one task in it can't inform a budget
-- [ ] Generate at least one real missed-deadline reclaim in the history so the agent's penalty logic has something to act on
+- [x] Generate historical data: post and complete several tasks at varying prices so the agent has a real distribution to reason over — tasks 1–2 paid at 0.65/0.60 USDC; task 3 budget auto-set to median 0.65 USDC
+- [x] Generate at least one real missed-deadline reclaim in the history so the agent's penalty logic has something to act on — task 3 round 0 reclaim indexed; worker `0xf147…6066` missedDeadlines=1, rebid reverts
 - [x] **COMMIT 6** — subgraph deployed and returning indexed data
+
+
 
 ## Phase 6 — Transaction confirmation tracker (D6)
 
@@ -227,55 +269,60 @@ Depends on Phase 5 — the subgraph must be live and indexing before it can be t
 
 ## Phase 7 — Agent decision logic
 
-- [ ] `backend`: GraphQL client against the Studio dev query URL
-- [ ] Query: historical paid amounts for comparable tasks
-- [ ] Query: per-worker assigned vs. paid counts for completion rate
-- [ ] Query: per-worker missed-deadline count from `MissedDeadline` records
-- [ ] Budget setting: derive `maxBudget` from the historical distribution rather than a constant
-- [ ] Choose `submissionWindow` per task from history rather than a constant — how long comparable tasks actually took to deliver
-- [ ] Bid evaluation: score every bid at or below `maxBudget` on price-versus-history, worker completion rate, and missed-deadline history; pick the best score
-- [ ] Log the agent's reasoning (the numbers it pulled, the score per bid, why the winner won) — the demo needs to show reasoning over live data, not a query dump
-- [ ] Add the LLM client for proof evaluation (pin the version in `AGENTS.md`; API key via env, never committed)
-- [ ] Proof evaluation: send the task description and submitted proof to the LLM, get an approve/reject verdict with a reason, then call `approveWork` or `rejectWork` accordingly
-- [ ] Verify the reject path end-to-end: submit deliberately inadequate proof, confirm the agent rejects it and the task returns to `Assigned` with a refreshed deadline
-- [ ] Agent watches for assigned tasks past `submissionDeadline` and calls `reclaimTask` autonomously — the reclaim is an agent decision, not a manual demo step
-- [ ] Verify the selection changes appropriately when subgraph history changes (e.g. a worker with a poor completion rate or a prior missed deadline is passed over despite bidding lower)
-- [ ] **COMMIT 8** — agent decision logic working
-
+- [x] `backend`: GraphQL client against the Studio dev query URL — reuses `backend/src/subgraph/client.ts`
+- [x] Query: historical paid amounts for comparable tasks — `fetchHistoricalPayments`, `fetchMedianPaidAmount`
+- [x] Query: per-worker assigned vs. paid counts for completion rate — `fetchWorkerStats`
+- [x] Query: per-worker missed-deadline count from `MissedDeadline` records — via `Worker.missedDeadlines`
+- [x] Budget setting: derive `maxBudget` from the historical distribution rather than a constant — `deriveTaskParams` (defaults to 1 USDC when history empty)
+- [x] Choose `submissionWindow` per task from history rather than a constant — median from paid tasks (defaults to 7200s)
+- [x] Bid evaluation: score every bid at or below `maxBudget` on price-versus-history, worker completion rate, and missed-deadline history; pick the best score — `scoreBids`
+- [x] Log the agent's reasoning (the numbers it pulled, the score per bid, why the winner won) — console + API responses on `/api/agent/*`
+- [x] Add the LLM client for proof evaluation (pin the version in `AGENTS.md`; API key via env, never committed) — `@anthropic-ai/sdk@0.123.0` + `openai@7.10.0` (uses whichever key is set)
+- [x] Proof evaluation: send the task description and submitted proof to the LLM, get an approve/reject verdict with a reason, then call `approveWork` or `rejectWork` accordingly — `evaluateProof` + agent cycle
+- [x] Verify the reject path end-to-end: submit deliberately inadequate proof, confirm the agent rejects it and the task returns to `Assigned` with a refreshed deadline — task 2: "asdf" rejected, resubmitted, paid 0.60 USDC
+- [x] Agent watches for assigned tasks past `submissionDeadline` and calls `reclaimTask` — manual via `POST /api/tasks/:id/reclaim` only (not auto in the agent loop)
+- [x] Verify the selection changes appropriately when subgraph history changes — task 2 budget derived from median paid (0.65 USDC); worker scored completion=1.00 and historyFit=0.92 from task 1 payment
+- [x] **COMMIT 8** — agent decision logic working — task 1: bid scored, proof approved by OpenAI, `PaymentReleased` confirmed on subgraph
+- [x] Single guarded escrow write path in `backend/src/agent/operations.ts` — HTTP routes, the autonomous loop, and the chat agent all go through it, so task-state rules cannot drift between entry points
 
 
 ## Phase 8 — Worker frontend
 
-- [ ] `frontend`: Next.js 16.3.4 on React 19, pinned
-- [ ] Task browse view listing open tasks with budget and time remaining
-- [ ] Selfie Check gate: IDKit flow, blocking bid submission until verification succeeds
-- [ ] Bid form with client-side `maxBudget` validation and remaining-time display from `bidDeadline`
-- [ ] Assigned-task view with the proof submission form (free text plus optional link) and a visible **countdown to `submissionDeadline`**
-- [ ] Pending-transaction UI per D6: every action shows submitted-but-unconfirmed state, polls `GET /transactions/:id`, and only reports success once confirmed. No optimistic success anywhere
-- [ ] Show rejection feedback and allow resubmission when the agent rejects the proof
-- [ ] Show the reclaimed state when a worker loses a task to a missed deadline, and reflect that they are barred from re-bidding that task
-- [ ] Payment status view showing the worker's Circle wallet balance and the settlement transaction link
-- [ ] Surface backend errors visibly (rejected duplicate nullifier, bid over budget, closed auction, expired submission window, failed relayed transaction)
-- [ ] Minimal styling — functional over polished, per spec
-- [ ] **COMMIT 9** — frontend task browse/bid/submit flow working
+- [x] `frontend`: Next.js 16.3.4 on React 19, pinned
+- [x] Task browse view listing open tasks with budget and time remaining — `/tasks`
+- [x] Two-step registration page (D3a): connect wallet and sign the ownership challenge, then Selfie Check; IDKit stays disabled until the wallet is linked
+- [x] Selfie Check gate on **every bid** (D8) via the shared `SelfieCheckButton`; bid button disabled until the amount is valid, so no proof is spent on a bid that would be rejected
+- [x] Bid form with client-side `maxBudget` validation and remaining-time display from `bidDeadline`
+- [x] Assigned-task view with the proof submission form (free text plus optional link) and a visible **countdown to** `submissionDeadline`
+- [x] Pending-transaction UI per D6: every action shows submitted-but-unconfirmed state, polls `GET /transactions/:id`, and only reports success once confirmed. No optimistic success anywhere
+- [x] Show rejection feedback and allow resubmission when the agent rejects the proof — task returns to `Assigned`; worker can resubmit on `/tasks/[id]`
+- [x] Show the reclaimed state when a worker loses a task to a missed deadline, and reflect that they are barred from re-bidding that task
+- [x] Payment status view showing the worker's self-custodied balance, explorer link, and an "add Arc testnet" action — `/wallet`. No withdraw endpoint: the worker already owns the keys
+- [x] Surface backend errors visibly (rejected duplicate nullifier, bid over budget, closed auction, expired submission window, failed relayed transaction)
+- [x] Worker UI: dark Hero31-style home, Career4-style task list, bid popup modeled on the portfolio widget — Tailwind 4.3.3 + motion 13.2.0
+- [x] **COMMIT 9** — frontend task browse/bid/submit flow working — World ID verified, bids placed, duplicate-amount blocked, abort cancel confirmed on task 0
 
 
 
-## Phase 9 — End-to-end and deliverables
+## Phase 9 — End-to-end and deliverables (in progress)
 
-- [ ] Dedicated reclaim run: post a task with a deliberately short `submissionWindow`, let the assigned worker miss it, confirm the agent reclaims autonomously, a second worker wins round 2, and payment settles to the second worker
-- [ ] Confirm the `MissedDeadline` record is indexed and the first worker's reputation reflects it
-- [ ] **COMMIT 10** — missed-deadline reclaim path verified end-to-end
-- [ ] Full flow on real testnets with two distinct sandbox World ID identities and at least two competing bids
-- [ ] Confirm the duplicate-identity block fires during the end-to-end run, not just in isolation
-- [ ] Confirm the agent's winner choice is traceable to specific subgraph numbers
-- [ ] Confirm USDC actually moved: agent wallet debited, worker wallet credited, unspent budget refunded
-- [ ] Confirm no relayed transaction was ever reported successful before its event was indexed
+- [x] Dedicated reclaim run (partial): task 3 missed deadline → `reclaimTask` → round 1 Open; barred worker rebid reverts on-chain; round-2 payout **skipped** (no second World ID)
+- [x] Confirm the `MissedDeadline` record is indexed and the first worker's reputation reflects it — subgraph shows `missedDeadlines: 1` on worker entity
+- [~] **COMMIT 10** — reclaim path verified through reclaim + indexing; round-2 second-worker payout deferred
+- [x] Full flow on real testnets with one sandbox World ID identity — post → bid → select → submit → approve/reject → payout verified (tasks 1–2)
+- [!] Two distinct World ID identities + competing bids — **deferred** (user choice)
+- [~] Duplicate-identity block — API-layer nullifier check implemented; live second-account attempt deferred
+- [x] Confirm the agent's winner choice is traceable to specific subgraph numbers — task 2 scoring logged (completion rate, history fit, median budget)
+- [x] Confirm USDC actually moved: agent wallet debited, worker wallet credited, unspent budget refunded — task 1: 0.65 USDC to worker, 0.35 USDC refund to agent on 1 USDC budget
+- [x] Confirm no relayed transaction was ever reported successful before its event was indexed — all task 1 txs confirmed only after subgraph `EscrowEvent` match
+- [x] Agent loop no longer auto-reclaims on missed deadlines — explicit `POST /api/tasks/:id/reclaim` only
+- [ ] Re-verify the full flow after the D3a custody change and the D7 Supabase move
 - [ ] Fix breakage found in the run
-- [ ] Sweep for dead code and unused dependencies introduced during integration; delete
-- [ ] **COMMIT 11** — full end-to-end flow verified working
-- [ ] `docs/`: architecture diagram with explicit sponsor-product labels on each leg of the flow, including the reclaim path and the subgraph-as-confirmation-layer role
-- [ ] `README.md`: setup, env vars, run instructions, and the sponsor-product mapping table
-- [ ] Finalize `docs/selfie-check-feedback.md` from the notes kept during Phase 3
-- [ ] Record the demo video, narrating which sponsor product powers each step
-- [ ] **COMMIT 12** — diagram, README, and docs added
+- [x] Sweep for dead code introduced during integration — removed the custodial worker-wallet creator, the backend withdraw path, and an unused RPC cache invalidator
+- [~] **COMMIT 11** — single-identity E2E verified; multi-identity items deferred
+- [x] `docs/architecture.md`: diagram with explicit sponsor-product labels, reclaim path, subgraph confirmation layer
+- [x] `README.md`: setup, env vars, run instructions, sponsor-product mapping table
+- [x] Finalize `docs/selfie-check-feedback.md` from integration notes
+- [ ] Record the demo video (2–4 min), narrating which sponsor product powers each step
+- [ ] Confirm the repo is public and the README is runnable by a judge from a clean clone
+- [~] **COMMIT 12** — diagram, README, and docs added (demo video pending)

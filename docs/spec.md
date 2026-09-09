@@ -14,15 +14,32 @@ Levantate Bridge is a marketplace where:
 
 1. An agent posts a task with a max budget (e.g. "collect and summarize complaints from residents in this neighborhood").
 2. Verified human workers bid on the task within a time-limited auction window.
-3. To bid, a worker must pass **World's Selfie Check** — proving they're a unique real human, preventing sybil/bot bidding and duplicate-identity abuse.
+3. **Each bid** must carry a fresh **World Selfie Check** — proving a unique real human is behind that specific bid, preventing sybil/bot bidding and duplicate-identity abuse. Workers also link a wallet they already control by signing a free off-chain challenge, so payouts land somewhere the marketplace can never touch.
 4. The agent picks a winning bid, informed by live historical data from **The Graph**.
 5. Funds are escrowed in USDC on **Arc** via **Circle Wallets / Agent Stack** the moment the task is posted.
 6. The worker completes the task and submits proof before a **submission deadline** set at the moment they were assigned.
-7. On approval, escrowed USDC releases automatically to the worker's Circle wallet.
+7. On approval, escrowed USDC releases automatically to the worker's own wallet.
 8. If the assigned worker misses the submission deadline, the agent **reclaims** the task: it returns to Open for a fresh round of bidding rather than leaving escrowed USDC stranded against a worker who never delivered. The miss is recorded on-chain and counts against that worker's reputation in future selections.
 9. All marketplace activity (tasks, bids, payments, missed deadlines) is indexed via **The Graph** (Subgraph Studio), and the agent queries this live data to make its budgeting and worker-selection decisions based on real historical signals (e.g. typical price for similar tasks, a worker's completion track record) rather than a naive rule.
 
 Single settlement rail throughout: USDC on Arc via Circle. No cross-chain bridging or swapping anywhere in the flow.
+
+### Worker wallets are self-custodied
+
+Workers keep their own keys. The backend holds Circle Developer-Controlled Wallets for exactly two
+roles — the **requesting agent**, which funds escrow, and the **relayer**, which submits worker
+transactions so workers never need gas. It holds nothing on a worker's behalf.
+
+At verification a worker connects an existing wallet and signs a single off-chain challenge
+(`personal_sign`): free, moves no funds, authorizes no transaction. The backend verifies that
+signature and binds the address one-to-one with the World ID nullifier, so an identity cannot
+register two payout addresses and an address cannot be claimed by two identities. `approveWork`
+then pays that address directly.
+
+The security consequence is the point: a leaked backend credential can disrupt the marketplace, but
+it cannot move a worker's earnings, and there is deliberately **no** backend-initiated withdrawal
+endpoint. The cost is one extra signup step — connecting a wallet — which does not reduce the
+agent's autonomy, since the agent's post → score → approve → settle loop is unchanged.
 
 ### Two deadlines, not one
 
@@ -52,12 +69,14 @@ This is the explicit mapping to call out in the README, diagram labels, and demo
 
 - **Circle (Agent Stack / Circle Wallets / Arc)**
   - The requesting agent holds a **Circle Developer-Controlled Wallet**, used to fund the escrow in USDC.
-  - Each verified worker gets a **Circle Wallet** auto-created (keyed to their World ID nullifier) to receive payment — no wallet setup burden on the worker.
+  - A second **Circle Developer-Controlled Wallet** is the relayer, submitting `placeBid` and `submitWork` on workers' behalf so no worker ever holds gas or signs a transaction.
   - The **escrow contract is deployed on Arc**, using USDC as the native gas/settlement asset.
   - Payment release (`approveWork` → `releasePayment`) is an autonomous on-chain USDC settlement triggered by the agent — this is the core "agent transacts on Arc" demonstration.
 - **World ID (Selfie Check)**
   - A worker must pass **Selfie Check** (via IDKit/MiniKit, World ID sandbox) before their bid is accepted.
-  - The proof is verified server-side; the **nullifier hash** is stored and checked to block one person from bidding under multiple identities.
+  - **Every bid requires its own fresh Selfie Check.** The proof's `signal` is bound to that task, round, and bid amount, and the backend spends each proof exactly once, so a single human verification cannot be replayed to script a flood of bids.
+  - The proof is verified server-side and the bidder's identity is **derived from the proof**, never from a client-supplied value — there is no cached credential a bot can reuse.
+  - A one-time registration binds the **nullifier hash** to the worker's self-custodied payout address, blocking one person from bidding under multiple identities.
   - This is the abuse-prevention/fairness use case: Selfie Check is gating *economic participation eligibility* in an auction, not identity verification.
 - **The Graph (Subgraph Studio)**
   - A subgraph indexes every state transition the escrow contract emits: `TaskPosted`, `BidPlaced`, `WorkerAssigned`, `WorkSubmitted`, `WorkRejected`, `PaymentReleased`, `TaskReclaimed`, `TaskCancelled`.
@@ -74,7 +93,9 @@ This is the explicit mapping to call out in the README, diagram labels, and demo
    |--(1) postTask(description, maxBudget, bidDeadline, submissionWindow)--> [Escrow Contract on Arc]
    |                                                 (locks USDC from agent's Circle Wallet)
    |
-[Worker] --(2) Selfie Check verify (World ID sandbox)--> [Backend: verify proof, store nullifier]
+[Worker] --(2a) connect own wallet + sign ownership challenge--> [Backend: remember payout address]
+   |
+[Worker] --(2b) fresh Selfie Check per bid, signal-bound to task+round+amount--> [Backend: verify, spend once, bind nullifier on first bid]
    |
    |--(3) placeBid()--> [Backend / Marketplace API] --> [Escrow Contract] (records bid)
    |                    (relayed: serialized nonce queue, tracked pending)
@@ -85,7 +106,7 @@ This is the explicit mapping to call out in the README, diagram labels, and demo
    |
 [Worker] --(6) submitWork(proofHash)--> [Backend] --> [Escrow Contract]  (reverts past submissionDeadline)
    |
-[Agent] --(7) approveWork()--> [Escrow Contract] --(8) releasePayment()--> [Worker's Circle Wallet on Arc]
+[Agent] --(7) approveWork()--> [Escrow Contract] --(8) releasePayment()--> [Worker's own wallet on Arc]
    |
    |--(7b) reclaimTask() if submissionDeadline passed with no submission--> [Escrow Contract]
    |        (task returns to Open for re-bidding; miss recorded as a reputation signal)
@@ -101,9 +122,9 @@ This is the explicit mapping to call out in the README, diagram labels, and demo
 ## Components to build
 
 1. **Escrow smart contract** (Solidity, Arc testnet) — states: Open → Bidding → Assigned → Submitted → Paid, plus Cancelled as a terminal state. Functions: `postTask`, `placeBid`, `selectWinner`, `submitWork`, `approveWork` (triggers USDC release), `rejectWork`, `reclaimTask` (Assigned → Open after a missed `submissionDeadline`), `cancelTask` (refund when a bidding round closes with no bids). Every one of these emits an event, since the subgraph is the confirmation authority.
-2. **Circle integration** — Developer-Controlled Wallets via Agent Stack: one wallet for the requesting agent, auto-created wallets per verified worker (keyed to their World ID nullifier).
-3. **World ID Selfie Check integration** — IDKit/MiniKit in sandbox mode; server-side proof verification; nullifier hash stored to block duplicate-identity bidding.
-4. **Backend / marketplace API** — orchestrates the full state machine, talks to the contract (viem/ethers) and Circle SDK. Includes the **relayed-transaction tracker**: a serialized, idempotent submission queue per wallet plus a pending→confirmed reconciler driven by subgraph events.
+2. **Circle integration** — Developer-Controlled Wallets via Agent Stack: one wallet for the requesting agent, one for the relayer. No custodial worker wallets.
+3. **World ID Selfie Check integration** — IDKit in sandbox mode; server-side proof verification; nullifier hash stored and bound to a self-custodied payout address to block duplicate-identity bidding.
+4. **Backend / marketplace API** — orchestrates the full state machine, talks to the contract (viem) and Circle SDK, and persists state in **hosted Supabase Postgres**. Includes the **relayed-transaction tracker**: a serialized, idempotent submission queue per wallet plus a pending→confirmed reconciler driven by subgraph events.
 5. **Subgraph** (Subgraph Studio) — indexes every contract event listed in the sponsor mapping above. Schema entities: `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline`. `Worker` carries the derived reputation fields the agent scores on, including missed-deadline counts.
 6. **Agent logic** — sets max budget and evaluates bids using live subgraph queries (historical price for similar tasks, a worker's completion rate, a worker's missed-deadline history) rather than a hardcoded rule.
 7. **Worker-facing frontend** — browse open tasks, complete Selfie Check, bid, submit proof of completed work.
@@ -115,7 +136,7 @@ This is the explicit mapping to call out in the README, diagram labels, and demo
 ## Tech stack (proposed)
 
 - Contracts: Solidity, deployed to Arc testnet
-- Backend: Node.js/TypeScript, viem or ethers for chain calls, Circle Wallets SDK
+- Backend: Node.js/TypeScript, viem for chain calls, Circle Wallets SDK, Supabase Postgres for persistence
 - Identity: World ID IDKit/MiniKit (sandbox), Selfie Check credential
 - Indexing: The Graph — Subgraph Studio, AssemblyScript mappings
 - Frontend: Next.js/React, minimal styling, functional over polished
@@ -129,7 +150,7 @@ Keep a clean top-level split — do not mix concerns into shared folders:
 
 ```
 /contracts     — Solidity escrow contract, deployment scripts, Arc testnet config
-/backend       — marketplace API, Circle SDK integration, World ID verification, chain calls
+/backend       — marketplace API, Circle SDK integration, World ID verification, chain calls, Supabase schema
 /frontend      — worker-facing web app
 /subgraph      — schema.graphql, mappings, subgraph manifest for Subgraph Studio
 /docs          — architecture diagram, README content, Selfie Check feedback doc
@@ -169,7 +190,7 @@ Each folder should be independently runnable/buildable (its own package.json whe
 Commit after each meaningfully complete feature — not one giant commit at the end, and not commits mid-broken-state. Suggested commit points:
 
 - Escrow contract written and deployed to Arc testnet (including deadline and reclaim logic)
-- Circle wallet creation (agent + worker) working
+- Circle wallet creation (agent + relayer) working
 - World ID Selfie Check verification working end-to-end
 - Relayer submission queue working (serialized nonces, idempotent retries)
 - Backend payment/escrow release logic working

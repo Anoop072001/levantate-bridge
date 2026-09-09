@@ -15,8 +15,10 @@ export function getWorkerSession(): WorkerSession | null {
 
 export function setWorkerSession(session: WorkerSession): void {
   localStorage.setItem(KEY, JSON.stringify(session));
+  window.dispatchEvent(new Event("levantate-session"));
 }
 
 export function clearWorkerSession(): void {
   localStorage.removeItem(KEY);
+  window.dispatchEvent(new Event("levantate-session"));
 }

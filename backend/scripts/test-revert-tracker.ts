@@ -26,13 +26,13 @@ console.log("Submitted:", tx.id, tx.status, tx.txHash);
 
 for (let i = 0; i < 30; i++) {
   await reconcileSubmittedTransactions();
-  const current = getRelayedTransaction(tx.id)!;
+  const current = (await getRelayedTransaction(tx.id))!;
   console.log(`poll ${i + 1}: ${current.status}${current.error ? ` (${current.error})` : ""}`);
   if (current.status === "failed" || current.status === "confirmed") break;
   await new Promise((r) => setTimeout(r, 5000));
 }
 
-const final = getRelayedTransaction(tx.id)!;
+const final = (await getRelayedTransaction(tx.id))!;
 if (final.status !== "failed") {
   console.error("Expected failed status for over-budget bid");
   process.exit(1);

@@ -16,7 +16,7 @@ Keep a clean top-level split. Do not mix concerns into shared folders.
 
 ```
 /contracts     — Solidity escrow contract, deployment scripts, Arc testnet config
-/backend       — marketplace API, Circle SDK integration, World ID verification, chain calls
+/backend       — marketplace API, Circle SDK integration, World ID verification, chain calls, Supabase schema
 /frontend      — worker-facing web app
 /subgraph      — schema.graphql, mappings, subgraph manifest for Subgraph Studio
 /docs          — spec, architecture diagram, README content, Selfie Check feedback doc
@@ -35,8 +35,8 @@ architecture diagram, and demo narration. When touching any of these areas, pres
 
 | Sponsor                                  | What it must be observably doing                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Circle** (Agent Stack / Wallets / Arc) | Agent holds a Developer-Controlled Wallet that funds escrow in USDC. Each verified worker gets a Circle Wallet auto-created, keyed to their World ID nullifier. Escrow contract is deployed **on Arc**, USDC as native gas/settlement asset. `approveWork` → `releasePayment` is an autonomous on-chain USDC settlement triggered by the agent. |
-| **World ID** (Selfie Check)              | Worker must pass Selfie Check before their bid is accepted. Proof verified server-side; nullifier hash stored and checked to block one person bidding under multiple identities. Framing is **economic-participation eligibility gating**, not identity verification.                                                                           |
+| **Circle** (Agent Stack / Wallets / Arc) | Agent holds a Developer-Controlled Wallet that funds escrow in USDC. A second Developer-Controlled Wallet acts as the relayer that submits worker transactions so workers never need gas. Escrow contract is deployed **on Arc**, USDC as native gas/settlement asset. `approveWork` → `releasePayment` is an autonomous on-chain USDC settlement triggered by the agent, paid to the worker's **self-custodied** address. |
+| **World ID** (Selfie Check)              | **Every bid carries its own fresh Selfie Check proof**, bound by `signal` to that task, round, and amount, verified server-side and spendable once. The bidder's identity is derived from the proof, never from a client-supplied value. A one-time registration binds the nullifier to a self-custodied payout address, blocking one person bidding under multiple identities. Framing is **economic-participation eligibility gating**, not identity verification. |
 | **The Graph** (Subgraph Studio)          | Subgraph indexes every contract state transition (`TaskPosted`, `BidPlaced`, `WorkerAssigned`, `WorkSubmitted`, `WorkRejected`, `PaymentReleased`, `TaskReclaimed`, `TaskCancelled`). The agent **queries the subgraph live** to set budgets and pick winning bids from real historical signals, including missed-deadline history. It is also the **confirmation authority** for whether a relayed transaction landed. Must be reasoning over live on-chain data, not a raw query printout.        |
 
 
@@ -93,10 +93,19 @@ Verified by web search on **2026-09-08**. Re-verify before adding anything not l
 | `@graphprotocol/graph-cli`                 | `0.98.1`       | Defaults to the Rust `gnd` binary; `GRAPH_CLI_IGNORE_GND` falls back to TypeScript.                                                                  |
 | `@graphprotocol/graph-ts`                  | `0.38.2`       | AssemblyScript mapping library.                                                                                                                      |
 | Next.js                                    | `16.3.4`       | Released 2026-08-31. Runs on React 19.                                                                                                               |
+| `@rainbow-me/rainbowkit`                   | `2.2.11`       | Verified 2026-09-09. Peer: wagmi `^2.9.0` (do **not** install wagmi 3).                                                                              |
+| wagmi                                      | `2.19.5`       | Last 2.x line RainbowKit 2.2.11 accepts.                                                                                                             |
+| `@tanstack/react-query`                    | `5.102.8`      | RainbowKit / wagmi peer.                                                                                                                             |
 | viem                                       | `2.56.0`       | Ships `arcTestnet` as a built-in chain — `import { arcTestnet } from 'viem/chains'`. Requires TypeScript ≥ 5.9.                                      |
 | ethers                                     | `6.17.0`       | Only if something specifically needs it; viem is the default for this repo.                                                                          |
+| `@supabase/supabase-js`                    | `2.115.0`      | Verified 2026-09-09. Backend persistence. **Requires Node ≥ 22** — Node 20 support was dropped in 2.110.0.                                           |
 | `@anthropic-ai/sdk`                        | `0.123.0`      | Released 2026-09-01. For the agent's proof evaluation. Requires Node ≥ 20.                                                                           |
 | `openai`                                   | `7.10.0`       | Released 2026-09-03. Alternative to the above — pick one, not both. Requires Node ≥ 22.                                                              |
+| Tailwind CSS                               | `4.3.3`        | Verified 2026-09-10. Use `@tailwindcss/postcss` `4.3.3` with Next; no `tailwind.config.js`.                                                          |
+| `motion`                                   | `13.2.0`       | Verified 2026-09-10. Import from `motion/react`.                                                                                                     |
+| `lucide-react`                             | `1.43.0`       | Verified 2026-09-10.                                                                                                                                 |
+| `clsx`                                     | `2.1.1`        | Classname helper for the worker UI.                                                                                                                  |
+| `tailwind-merge`                           | `3.6.0`        | Used by `cn()`.                                                                                                                                      |
 
 
 **Do not use** `@worldcoin/minikit-js` **for verification.** MiniKit 2.x removed World ID verification
@@ -209,7 +218,7 @@ Each commit message names the feature and confirms it was tested. Describe behav
 Planned commit points (see `PLAN.md` for which tasks roll up into each):
 
 1. Escrow contract written and deployed to Arc testnet (including `submissionDeadline` and `reclaimTask`)
-2. Circle wallet creation (agent + worker) working
+2. Circle wallet creation (agent + relayer) working
 3. World ID Selfie Check verification working end-to-end
 4. Relayer submission queue working (serialized nonces, idempotent retries)
 5. Backend payment/escrow release logic working
@@ -231,7 +240,13 @@ with empty values. Never commit real values, and never print a secret to chat, l
 message.
 
 Never commit: Circle API key, Circle entity secret or its recovery file, deployer private key, World
-ID RP signing key, World ID team API key, Graph deploy key, LLM API key.
+ID RP signing key, World ID team API key, Graph deploy key, LLM API key, Supabase service role key.
+
+**Worker funds are never custodial.** The backend holds Circle Developer-Controlled Wallets for the
+agent and the relayer only. Workers link a wallet they already control by signing an off-chain
+challenge, and escrow pays that address directly. Never reintroduce a backend-held worker wallet, a
+backend-initiated worker withdrawal, or any code path where a leaked backend credential can move a
+worker's earnings.
 
 Environment inventory — keep this current as values are obtained:
 
@@ -253,4 +268,7 @@ Environment inventory — keep this current as values are obtained:
 | `CIRCLE_AGENT_WALLET_ID` | 4 | produced by Phase 1 |
 | `CIRCLE_RELAYER_WALLET_ID` | 4 | produced by Phase 4 |
 | `SUBGRAPH_QUERY_URL` | 6, 7 | produced by Phase 5 deploy |
-| `ANTHROPIC_API_KEY` *or* `OPENAI_API_KEY` | 7 | pending (D2 proof evaluation) |
+| `SUPABASE_URL` | 4 | pending — created with the hosted Supabase project |
+| `SUPABASE_SERVICE_ROLE_KEY` | 4 | pending — **server-only**, bypasses RLS |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | 8 | pending — public WalletConnect Cloud / Reown id for RainbowKit |
+| `ANTHROPIC_API_KEY` *or* `OPENAI_API_KEY` | 7 | present (`OPENAI_API_KEY`, D2 proof evaluation) |

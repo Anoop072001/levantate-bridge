@@ -1,69 +1,61 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { fetchTasks, usdcMicroToDisplay } from "@/lib/api";
-import { Countdown } from "@/components/Countdown";
+import Link from "next/link";
+import { BidSheet } from "@/components/BidSheet";
+import { TaskBoard } from "@/components/TaskBoard";
+import { fetchTasks } from "@/lib/api";
+import { shortAddress } from "@/lib/task-display";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { Task } from "@/lib/types";
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [bidTask, setBidTask] = useState<Task | null>(null);
   const { session, ready } = useWorkerSession();
 
-  useEffect(() => {
+  function reload() {
     fetchTasks()
-      .then((all) => setTasks(all.filter((t) => t.state === 0 || t.state === 1)))
+      .then(setTasks)
       .catch((err) => setError(err instanceof Error ? err.message : "Load failed"));
+  }
+
+  useEffect(() => {
+    reload();
   }, []);
 
   return (
-    <main style={{ maxWidth: 720, margin: "2rem auto", padding: "0 1rem", fontFamily: "system-ui" }}>
-      <p>
-        <Link href="/">← Home</Link>
-      </p>
-      <h1>Open tasks</h1>
-
-      {ready &&
-        (session ? (
-          <p style={{ fontSize: "0.9rem" }}>
-            Verified as <code>{session.walletAddress.slice(0, 10)}…</code>
-          </p>
-        ) : (
-          <p style={{ color: "#666" }}>
-            Verify with World ID before bidding.{" "}
-            <Link href="/verify?signal=browse&return=/tasks">Verify now</Link>
-          </p>
-        ))}
-
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-
-      {tasks.length === 0 && !error && <p>No open tasks right now.</p>}
-
-      <ul style={{ listStyle: "none", padding: 0 }}>
-        {tasks.map((task) => (
-          <li
-            key={task.id}
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              padding: "1rem",
-              marginBottom: "1rem",
-            }}
-          >
-            <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.1rem" }}>
-              <Link href={`/tasks/${task.id}`}>Task #{task.id}</Link>
-            </h2>
-            <p style={{ margin: "0 0 0.5rem" }}>{task.description}</p>
-            <p style={{ margin: 0, fontSize: "0.9rem" }}>
-              Budget: {usdcMicroToDisplay(task.maxBudget)} USDC · Round {task.round} ·{" "}
-              {task.stateLabel}
-            </p>
-            <Countdown deadlineUnix={task.bidDeadline} label="Bid closes in" />
-          </li>
-        ))}
-      </ul>
-    </main>
+    <>
+      <TaskBoard
+        tasks={tasks}
+        error={error}
+        onBid={setBidTask}
+        sessionHint={
+          ready ? (
+            session ? (
+              <p className="text-sm text-muted-foreground">
+                Payout wallet <code className="text-foreground">{shortAddress(session.walletAddress)}</code>
+                {session.nullifierHash ? "" : " — Selfie Check still required to bid"}
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Connect a payout wallet before your first bid.{" "}
+                <Link href="/verify?return=/tasks" className="underline underline-offset-2">
+                  Link wallet
+                </Link>
+                . Every bid still needs a fresh Selfie Check.
+              </p>
+            )
+          ) : null
+        }
+      />
+      <BidSheet
+        task={bidTask}
+        open={Boolean(bidTask)}
+        onClose={() => setBidTask(null)}
+        onSettled={reload}
+      />
+    </>
   );
 }

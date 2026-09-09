@@ -1,18 +1,17 @@
 import { createServer } from "node:http";
 import { URL } from "node:url";
 import { signRequest } from "@worldcoin/idkit-core/signing";
+import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
-import { createWorkerWallet } from "./circle/create-worker-wallet.js";
 import { handleAgentRoute, startAgentLoop } from "./routes/agent.js";
 import { handleTasksRoute } from "./routes/tasks.js";
-import { extractNullifierHash } from "./world-id/nullifier.js";
-import {
-  consumeExpectedSignal,
-  createSignalToken,
-  registerExpectedSignal,
-} from "./world-id/signals.js";
+import { createWalletChallenge, consumeWalletChallenge } from "./wallet/challenge.js";
+import { createSignalToken, registerExpectedSignal } from "./world-id/signals.js";
 import { startConfirmationReconciler } from "./confirmation/reconciler.js";
-import { findWorkerByNullifier, insertWorker } from "./store.js";
+import {
+  findWorkerByAddress,
+  upsertLinkedWallet,
+} from "./store.js";
 
 loadRootEnv();
 startConfirmationReconciler();
@@ -20,7 +19,6 @@ startAgentLoop();
 
 const PORT = Number(process.env.BACKEND_PORT ?? 3001);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
-const WORLD_VERIFY_BASE = "https://developer.world.org/api/v4/verify";
 
 function json(res: import("node:http").ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
@@ -80,6 +78,65 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/wallet/challenge") {
+    const payload = body as { address?: string };
+    const address = payload.address?.trim();
+    if (!address || !isAddress(address)) {
+      send(400, { error: "A valid wallet address is required" });
+      return;
+    }
+
+    send(200, createWalletChallenge(address));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/wallet/link") {
+    try {
+      const payload = body as {
+        address?: string;
+        signature?: string;
+        challengeToken?: string;
+      };
+      const address = payload.address?.trim();
+      const signature = payload.signature?.trim();
+      const challengeToken = payload.challengeToken?.trim();
+      if (!address || !signature || !challengeToken) {
+        send(400, { error: "address, signature, and challengeToken are required" });
+        return;
+      }
+      if (!isAddress(address)) {
+        send(400, { error: "Invalid wallet address" });
+        return;
+      }
+
+      const ownsWallet = await consumeWalletChallenge(challengeToken, address, signature);
+      if (!ownsWallet) {
+        send(400, { error: "Wallet signature did not match the issued challenge" });
+        return;
+      }
+
+      const existing = await findWorkerByAddress(address);
+      if (existing) {
+        send(200, {
+          walletAddress: existing.address,
+          nullifierHash: existing.nullifierHash,
+          alreadyBound: true,
+        });
+        return;
+      }
+
+      const linked = await upsertLinkedWallet(address);
+      send(200, {
+        walletAddress: linked.address,
+        linkToken: linked.linkToken,
+        alreadyBound: false,
+      });
+    } catch (err) {
+      send(500, { error: err instanceof Error ? err.message : "Wallet link failed" });
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/world-id/rp-signature") {
     try {
       const payload = body as { signal?: string };
@@ -111,80 +168,6 @@ const server = createServer(async (req, res) => {
       });
     } catch (err) {
       send(500, { error: err instanceof Error ? err.message : "RP signature failed" });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/world-id/verify") {
-    try {
-      const payload = body as {
-        rp_id?: string;
-        idkitResponse?: Record<string, unknown>;
-        signal?: string;
-        signal_token?: string;
-      };
-
-      const rpId = payload.rp_id ?? requireEnv("WORLD_RP_ID");
-      const idkitResponse = payload.idkitResponse;
-      const signal = payload.signal?.trim();
-      const signalToken = payload.signal_token?.trim();
-
-      if (!idkitResponse || !signal || !signalToken) {
-        send(400, { error: "idkitResponse, signal, and signal_token are required" });
-        return;
-      }
-
-      if (!consumeExpectedSignal(signalToken, signal)) {
-        send(400, { error: "Signal mismatch or expired session" });
-        return;
-      }
-
-      const verifyRes = await fetch(`${WORLD_VERIFY_BASE}/${rpId}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(idkitResponse),
-      });
-
-      if (!verifyRes.ok) {
-        const detail = await verifyRes.text();
-        send(400, { error: "World ID verification failed", detail });
-        return;
-      }
-
-      const nullifierHash = extractNullifierHash(
-        idkitResponse as { responses?: Array<{ nullifier?: string; session_nullifier?: string[] }> },
-      );
-      if (!nullifierHash) {
-        send(400, { error: "No nullifier in IDKit response" });
-        return;
-      }
-
-      const existing = findWorkerByNullifier(nullifierHash);
-      if (existing) {
-        send(409, {
-          error: "Duplicate World ID — this identity already has a worker wallet",
-          walletAddress: existing.address,
-        });
-        return;
-      }
-
-      const { walletId, address } = await createWorkerWallet(nullifierHash);
-      insertWorker({
-        nullifierHash,
-        circleWalletId: walletId,
-        address,
-        signal,
-        createdAt: new Date().toISOString(),
-      });
-
-      send(200, {
-        success: true,
-        nullifierHash,
-        walletId,
-        walletAddress: address,
-      });
-    } catch (err) {
-      send(500, { error: err instanceof Error ? err.message : "Verification failed" });
     }
     return;
   }

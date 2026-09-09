@@ -2,11 +2,11 @@ import { readOnChainTask } from "../chain/task-state.js";
 import { getTask, upsertTask } from "../store.js";
 
 export async function syncStoredTaskFromChain(taskId: number): Promise<void> {
-  const stored = getTask(taskId);
+  const stored = await getTask(taskId);
   if (!stored) return;
 
   const onChain = await readOnChainTask(taskId);
-  upsertTask({
+  await upsertTask({
     ...stored,
     maxBudget: onChain.maxBudget.toString(),
     bidDeadline: onChain.bidDeadline.toString(),

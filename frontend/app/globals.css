@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-instrument), ui-serif, Georgia, serif;
+  --color-background: oklch(0.985 0.008 85);
+  --color-foreground: oklch(0.17 0.02 55);
+  --color-muted: oklch(0.955 0.01 85);
+  --color-muted-foreground: oklch(0.48 0.02 55);
+  --color-border: oklch(0.89 0.012 75);
+  --color-card: oklch(0.995 0.004 85);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+.hero-grain {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+}

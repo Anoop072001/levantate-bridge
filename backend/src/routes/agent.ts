@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pendingHandle } from "../relayer/submit.js";
-import { agentPostTask, deriveTaskParams, runAgentCycle, scoreBids } from "../agent/runner.js";
+import { deriveTaskParams, runAgentCycle, scoreBids } from "../agent/runner.js";
+import { postTask } from "../agent/operations.js";
 import { getTask, listBidsForTask } from "../store.js";
 import { createArcPublicClient } from "../chain/escrow.js";
 import { readOnChainTask } from "../chain/task-state.js";
@@ -37,30 +38,38 @@ export async function handleAgentRoute(
   }
 
   if (req.method === "POST" && url.pathname === "/api/agent/tasks") {
-    const input = body as { description?: string; bidDeadlineSeconds?: number };
+    const input = body as {
+      description?: string;
+      bidDeadlineSeconds?: number;
+      submissionWindowSeconds?: number;
+    };
     if (!input.description) {
       json(400, { error: "description required" });
       return true;
     }
-    try {
-      const result = await agentPostTask(input.description, input.bidDeadlineSeconds ?? 3600);
-      json(202, {
-        taskId: result.taskId,
-        reasoning: result.params.reasoning,
-        maxBudget: result.params.maxBudget.toString(),
-        submissionWindow: result.params.submissionWindow.toString(),
-        transactions: result.transactions.map(pendingHandle),
-      });
-    } catch (err) {
-      json(502, { error: err instanceof Error ? err.message : "Agent post task failed" });
+    const result = await postTask({
+      description: input.description,
+      bidDeadlineSeconds: input.bidDeadlineSeconds ?? 3600,
+      submissionWindowSeconds: input.submissionWindowSeconds,
+    });
+    if (!result.ok) {
+      json(result.status, { error: result.error });
+      return true;
     }
+    json(202, {
+      taskId: result.task.taskId,
+      reasoning: result.task.budgetReasoning,
+      maxBudget: result.task.maxBudget.toString(),
+      submissionWindow: result.task.submissionWindow.toString(),
+      transactions: result.task.transactions.map(pendingHandle),
+    });
     return true;
   }
 
   const scoreMatch = url.pathname.match(/^\/api\/agent\/tasks\/(\d+)\/score-bids$/);
   if (req.method === "GET" && scoreMatch) {
     const taskId = Number(scoreMatch[1]);
-    const stored = getTask(taskId);
+    const stored = await getTask(taskId);
     if (!stored) {
       json(404, { error: "Task not found" });
       return true;
@@ -71,7 +80,7 @@ export async function handleAgentRoute(
       const round = url.searchParams.has("round")
         ? Number(url.searchParams.get("round"))
         : onChain.round;
-      const bids = listBidsForTask(taskId, round);
+      const bids = await listBidsForTask(taskId, round);
       const selection = await scoreBids(bids, onChain.maxBudget);
       json(200, selection);
     } catch (err) {

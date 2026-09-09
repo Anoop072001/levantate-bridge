@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.18.2"
+    "node": ">=22"
   },
   "scripts": {
     "setup-wallets": "tsx scripts/setup-wallets.ts",
@@ -11,15 +11,17 @@
     "verify-usdc-transfer": "tsx scripts/verify-usdc-transfer.ts",
     "dev": "tsx src/server.ts",
     "reconcile": "tsx scripts/reconcile-once.ts",
+    "migrate-db-json": "tsx scripts/migrate-db-json-to-supabase.ts",
     "test-revert-tracker": "tsx scripts/test-revert-tracker.ts",
     "test-agent-budget": "tsx scripts/test-agent-budget.ts",
     "test-proof-eval": "tsx scripts/test-proof-eval.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.123.0",
+    "@anthropic-ai/sdk": "0.123.0",
     "@circle-fin/developer-controlled-wallets": "10.8.0",
+    "@supabase/supabase-js": "2.115.0",
     "@worldcoin/idkit-core": "4.2.2",
-    "openai": "^7.10.0",
+    "openai": "7.10.0",
     "viem": "2.56.0"
   },
   "devDependencies": {

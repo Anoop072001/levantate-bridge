@@ -1,52 +1,54 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { keccak256, toBytes } from "viem";
 import { readUsdcBalance } from "../chain/usdc-balance.js";
-import { createArcPublicClient, getEscrowAddress, getEscrowContract, getUsdcAddress } from "../chain/escrow.js";
+import { createArcPublicClient, getEscrowAddress } from "../chain/escrow.js";
 import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
+import { enrichTask } from "../chain/task-view.js";
 import { requireEnv } from "../env.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
 import {
+  approveWork,
+  cancelTask,
+  postTask,
+  reclaimTask,
+  rejectWork,
+  selectWinner,
+  type OpFailure,
+} from "../agent/operations.js";
+import {
+  deleteLinkedWallet,
+  findLinkedWallet,
+  findWorkerByAddress,
   findWorkerByNullifier,
-  getBid,
   getProof,
   getRelayedTransaction,
   getTask,
   insertBid,
+  insertWorker,
   listBidsForTask,
   listTasks,
   upsertProof,
-  upsertTask,
-  type TaskRecord,
 } from "../store.js";
+import { verifySelfieCheck } from "../world-id/verify.js";
 
-async function enrichTask(t: TaskRecord, client: ReturnType<typeof createArcPublicClient>) {
-  const onChain = await readOnChainTask(t.id, client);
-  return {
-    ...t,
-    bidDeadline: onChain.bidDeadline.toString(),
-    submissionWindow: onChain.submissionWindow.toString(),
-    submissionDeadline: onChain.submissionDeadline.toString(),
-    round: onChain.round,
-    state: onChain.state,
-    stateLabel: onChain.stateLabel,
-    assignedWorker: onChain.assignedWorker,
-    currentRoundBidCount: onChain.currentRoundBidCount.toString(),
-    maxBudget: onChain.maxBudget.toString(),
-  };
+/**
+ * Binds a Selfie Check proof to one specific bid. Mirrored in `frontend/lib/bid-signal.ts` —
+ * the two must stay identical or bids will be rejected.
+ */
+export function bidSignal(taskId: number, round: number, amountMicro: string): string {
+  return `bid:${taskId}:${round}:${amountMicro}`;
 }
 
-async function agentContractCall(
+/** A rejected operation keeps its transaction handle when one exists, per D6. */
+function respondFailure(
   json: (status: number, payload: unknown) => void,
-  input: Parameters<typeof enqueueContractCall>[0],
-  errorLabel: string,
-) {
-  const tx = await enqueueContractCall(input);
-  if (tx.status === "failed") {
-    json(502, { error: `${errorLabel} failed`, ...pendingHandle(tx) });
-    return null;
+  failure: OpFailure,
+): void {
+  if (failure.transaction) {
+    json(failure.status, { ...pendingHandle(failure.transaction), error: failure.error });
+    return;
   }
-  json(202, pendingHandle(tx));
-  return tx;
+  json(failure.status, { error: failure.error });
 }
 
 export async function handleTasksRoute(
@@ -58,12 +60,10 @@ export async function handleTasksRoute(
 ): Promise<boolean> {
   const client = createArcPublicClient();
   const escrowAddress = getEscrowAddress();
-  const usdcAddress = getUsdcAddress();
-  const agentWalletId = requireEnv("CIRCLE_AGENT_WALLET_ID");
   const relayerWalletId = requireEnv("CIRCLE_RELAYER_WALLET_ID");
 
   if (req.method === "GET" && url.pathname === "/api/tasks") {
-    const stored = listTasks();
+    const stored = await listTasks();
     const enriched = await Promise.all(stored.map((t) => enrichTask(t, client)));
     json(200, { tasks: enriched });
     return true;
@@ -72,7 +72,7 @@ export async function handleTasksRoute(
   const taskDetailMatch = url.pathname.match(/^\/api\/tasks\/(\d+)$/);
   if (req.method === "GET" && taskDetailMatch) {
     const taskId = Number(taskDetailMatch[1]);
-    const stored = getTask(taskId);
+    const stored = await getTask(taskId);
     if (!stored) {
       json(404, { error: "Task not found" });
       return true;
@@ -101,76 +101,48 @@ export async function handleTasksRoute(
       return true;
     }
 
-    const maxBudget = BigInt(input.maxBudget);
-    const bidDeadline = BigInt(Math.floor(Date.now() / 1000) + input.bidDeadlineSeconds);
-    const submissionWindow = BigInt(input.submissionWindowSeconds);
-
-    const nextId = (await client.readContract({
-      address: escrowAddress,
-      abi: [{ name: "nextTaskId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }],
-      functionName: "nextTaskId",
-    })) as bigint;
-    const taskId = Number(nextId);
-
-    const approveTx = await enqueueContractCall({
-      walletId: agentWalletId,
-      kind: "usdc_approve",
-      expectedEvent: "Approval",
-      contractAddress: usdcAddress,
-      abiFunctionSignature: "approve(address,uint256)",
-      abiParameters: [escrowAddress, maxBudget.toString()],
-    });
-    if (approveTx.status === "failed") {
-      json(502, { error: "USDC approve failed", ...pendingHandle(approveTx) });
-      return true;
-    }
-
-    const postTx = await enqueueContractCall({
-      walletId: agentWalletId,
-      kind: "post_task",
-      expectedEvent: "TaskPosted",
-      contractAddress: escrowAddress,
-      abiFunctionSignature: "postTask(string,uint256,uint256,uint256)",
-      abiParameters: [input.description, maxBudget.toString(), bidDeadline.toString(), submissionWindow.toString()],
-      taskId,
-      round: 0,
-    });
-    if (postTx.status === "failed") {
-      json(502, { error: "postTask failed", ...pendingHandle(postTx) });
-      return true;
-    }
-
-    upsertTask({
-      id: taskId,
+    const result = await postTask({
       description: input.description,
-      maxBudget: maxBudget.toString(),
-      bidDeadline: bidDeadline.toString(),
-      submissionWindow: submissionWindow.toString(),
-      round: 0,
-      state: 0,
-      createdAt: new Date().toISOString(),
+      bidDeadlineSeconds: input.bidDeadlineSeconds,
+      submissionWindowSeconds: input.submissionWindowSeconds,
+      maxBudgetMicro: BigInt(input.maxBudget).toString(),
     });
+    if (!result.ok) {
+      respondFailure(json, result);
+      return true;
+    }
 
-    json(202, { taskId, transactions: [pendingHandle(approveTx), pendingHandle(postTx)] });
+    json(202, {
+      taskId: result.task.taskId,
+      transactions: result.task.transactions.map(pendingHandle),
+    });
     return true;
   }
 
   const bidMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/bids$/);
   if (req.method === "POST" && bidMatch) {
     const taskId = Number(bidMatch[1]);
-    const input = body as { nullifierHash?: string; amount?: number };
-    if (!input.nullifierHash || !input.amount) {
-      json(400, { error: "nullifierHash and amount required" });
+    const input = body as {
+      amount?: number;
+      rp_id?: string;
+      idkitResponse?: Record<string, unknown>;
+      signal?: string;
+      signal_token?: string;
+      walletAddress?: string;
+      linkToken?: string;
+    };
+    if (!input.amount) {
+      json(400, { error: "amount required" });
+      return true;
+    }
+    if (!input.idkitResponse || !input.signal || !input.signal_token) {
+      json(400, {
+        error: "A Selfie Check proof is required to bid — idkitResponse, signal, and signal_token",
+      });
       return true;
     }
 
-    const worker = findWorkerByNullifier(input.nullifierHash);
-    if (!worker) {
-      json(403, { error: "Worker not verified" });
-      return true;
-    }
-
-    const task = getTask(taskId);
+    const task = await getTask(taskId);
     if (!task) {
       json(404, { error: "Task not found" });
       return true;
@@ -190,8 +162,77 @@ export async function handleTasksRoute(
       return true;
     }
 
+    // Cheap checks first so a rejected bid never burns the worker's Selfie Check.
     const amountStr = BigInt(input.amount).toString();
-    const duplicate = listBidsForTask(taskId, onChain.round).some(
+    const expectedSignal = bidSignal(taskId, onChain.round, amountStr);
+    if (input.signal !== expectedSignal) {
+      json(400, { error: "Selfie Check proof was issued for a different task, round, or amount" });
+      return true;
+    }
+
+    if (input.walletAddress) {
+      const duplicateHint = (await listBidsForTask(taskId, onChain.round)).some(
+        (b) =>
+          b.workerAddress.toLowerCase() === input.walletAddress!.toLowerCase() &&
+          b.amount === amountStr,
+      );
+      if (duplicateHint) {
+        json(409, { error: "You already placed a bid for this amount on this task" });
+        return true;
+      }
+    }
+
+    const proof = await verifySelfieCheck({
+      rpId: input.rp_id ?? requireEnv("WORLD_RP_ID"),
+      idkitResponse: input.idkitResponse,
+      signal: input.signal,
+      signalToken: input.signal_token,
+    });
+    if (!proof.ok) {
+      json(proof.status, { error: proof.error, detail: proof.detail });
+      return true;
+    }
+
+    // Identity is read out of the proof. A stored session cannot bid for someone else.
+    let worker = await findWorkerByNullifier(proof.nullifierHash);
+    if (!worker) {
+      const walletAddress = input.walletAddress?.trim();
+      const linkToken = input.linkToken?.trim();
+      if (!walletAddress || !linkToken) {
+        json(403, {
+          error: "Connect a payout wallet before your first bid — Selfie Check alone has nowhere to send USDC",
+        });
+        return true;
+      }
+
+      const linked = await findLinkedWallet(walletAddress, linkToken);
+      if (!linked) {
+        json(403, { error: "Wallet link expired or invalid — connect your wallet again" });
+        return true;
+      }
+
+      const addressTaken = await findWorkerByAddress(walletAddress);
+      if (addressTaken) {
+        json(409, { error: "This wallet is already bound to a different World ID" });
+        return true;
+      }
+
+      await insertWorker({
+        nullifierHash: proof.nullifierHash,
+        address: walletAddress,
+        signal: input.signal,
+        createdAt: new Date().toISOString(),
+      });
+      await deleteLinkedWallet(walletAddress);
+      worker = {
+        nullifierHash: proof.nullifierHash,
+        address: walletAddress,
+        signal: input.signal,
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    const duplicate = (await listBidsForTask(taskId, onChain.round)).some(
       (b) =>
         b.workerAddress.toLowerCase() === worker.address.toLowerCase() && b.amount === amountStr,
     );
@@ -219,21 +260,25 @@ export async function handleTasksRoute(
     });
 
     if (tx.status === "failed") {
-      json(502, { error: "placeBid failed", ...pendingHandle(tx) });
+      json(502, { ...pendingHandle(tx), error: tx.error ?? "placeBid failed" });
       return true;
     }
 
-    insertBid({
+    await insertBid({
       id: Number(nextBidId),
       taskId,
       round: onChain.round,
       workerAddress: worker.address,
-      nullifierHash: input.nullifierHash,
-      amount: BigInt(input.amount).toString(),
+      nullifierHash: proof.nullifierHash,
+      amount: amountStr,
       createdAt: new Date().toISOString(),
     });
 
-    json(202, pendingHandle(tx));
+    json(202, {
+      ...pendingHandle(tx),
+      nullifierHash: proof.nullifierHash,
+      walletAddress: worker.address,
+    });
     return true;
   }
 
@@ -241,7 +286,7 @@ export async function handleTasksRoute(
   if (req.method === "GET" && proofMatch) {
     const taskId = Number(proofMatch[1]);
     const round = Number(url.searchParams.get("round") ?? "0");
-    const proof = getProof(taskId, round);
+    const proof = await getProof(taskId, round);
     if (!proof) {
       json(404, { error: "Proof not found" });
       return true;
@@ -262,13 +307,13 @@ export async function handleTasksRoute(
       return true;
     }
 
-    const worker = findWorkerByNullifier(input.nullifierHash);
+    const worker = await findWorkerByNullifier(input.nullifierHash);
     if (!worker) {
       json(403, { error: "Worker not verified" });
       return true;
     }
 
-    const task = getTask(taskId);
+    const task = await getTask(taskId);
     if (!task) {
       json(404, { error: "Task not found" });
       return true;
@@ -304,11 +349,11 @@ export async function handleTasksRoute(
     });
 
     if (tx.status === "failed") {
-      json(502, { error: "submitWork failed", ...pendingHandle(tx) });
+      json(502, { ...pendingHandle(tx), error: tx.error ?? "submitWork failed" });
       return true;
     }
 
-    upsertProof({
+    await upsertProof({
       taskId,
       round: onChain.round,
       content: payload,
@@ -323,14 +368,14 @@ export async function handleTasksRoute(
   const bidsListMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/bids$/);
   if (req.method === "GET" && bidsListMatch) {
     const taskId = Number(bidsListMatch[1]);
-    if (!getTask(taskId)) {
+    if (!(await getTask(taskId))) {
       json(404, { error: "Task not found" });
       return true;
     }
     const round = url.searchParams.has("round")
       ? Number(url.searchParams.get("round"))
       : (await readOnChainTask(taskId, client)).round;
-    json(200, { bids: listBidsForTask(taskId, round) });
+    json(200, { bids: await listBidsForTask(taskId, round) });
     return true;
   }
 
@@ -342,106 +387,35 @@ export async function handleTasksRoute(
       json(400, { error: "bidId required" });
       return true;
     }
-    if (!getTask(taskId)) {
-      json(404, { error: "Task not found" });
-      return true;
-    }
 
-    const onChain = await readOnChainTask(taskId, client);
-    if (onChain.state !== 1) {
-      json(409, { error: `Task is ${onChain.stateLabel}; select requires Bidding` });
+    const result = await selectWinner(taskId, input.bidId);
+    if (!result.ok) {
+      respondFailure(json, result);
       return true;
     }
-    if (nowSeconds() <= onChain.bidDeadline) {
-      json(409, { error: "Bid deadline has not passed yet" });
-      return true;
-    }
-
-    const bid = getBid(input.bidId);
-    if (!bid || bid.taskId !== taskId || bid.round !== onChain.round) {
-      json(400, { error: "Invalid bid for this task and round" });
-      return true;
-    }
-
-    await agentContractCall(
-      json,
-      {
-        walletId: agentWalletId,
-        kind: "select_winner",
-        expectedEvent: "WorkerAssigned",
-        contractAddress: escrowAddress,
-        abiFunctionSignature: "selectWinner(uint256,uint256)",
-        abiParameters: [taskId, input.bidId],
-        taskId,
-        round: onChain.round,
-        worker: bid.workerAddress,
-      },
-      "selectWinner",
-    );
+    json(202, pendingHandle(result.transaction));
     return true;
   }
 
   const approveMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/approve$/);
   if (req.method === "POST" && approveMatch) {
-    const taskId = Number(approveMatch[1]);
-    if (!getTask(taskId)) {
-      json(404, { error: "Task not found" });
+    const result = await approveWork(Number(approveMatch[1]));
+    if (!result.ok) {
+      respondFailure(json, result);
       return true;
     }
-
-    const onChain = await readOnChainTask(taskId, client);
-    if (onChain.state !== 3) {
-      json(409, { error: `Task is ${onChain.stateLabel}; approve requires Submitted` });
-      return true;
-    }
-
-    await agentContractCall(
-      json,
-      {
-        walletId: agentWalletId,
-        kind: "approve_work",
-        expectedEvent: "PaymentReleased",
-        contractAddress: escrowAddress,
-        abiFunctionSignature: "approveWork(uint256)",
-        abiParameters: [taskId],
-        taskId,
-        round: onChain.round,
-        worker: onChain.assignedWorker,
-      },
-      "approveWork",
-    );
+    json(202, pendingHandle(result.transaction));
     return true;
   }
 
   const rejectMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/reject$/);
   if (req.method === "POST" && rejectMatch) {
-    const taskId = Number(rejectMatch[1]);
-    if (!getTask(taskId)) {
-      json(404, { error: "Task not found" });
+    const result = await rejectWork(Number(rejectMatch[1]));
+    if (!result.ok) {
+      respondFailure(json, result);
       return true;
     }
-
-    const onChain = await readOnChainTask(taskId, client);
-    if (onChain.state !== 3) {
-      json(409, { error: `Task is ${onChain.stateLabel}; reject requires Submitted` });
-      return true;
-    }
-
-    await agentContractCall(
-      json,
-      {
-        walletId: agentWalletId,
-        kind: "reject_work",
-        expectedEvent: "WorkRejected",
-        contractAddress: escrowAddress,
-        abiFunctionSignature: "rejectWork(uint256)",
-        abiParameters: [taskId],
-        taskId,
-        round: onChain.round,
-        worker: onChain.assignedWorker,
-      },
-      "rejectWork",
-    );
+    json(202, pendingHandle(result.transaction));
     return true;
   }
 
@@ -453,105 +427,30 @@ export async function handleTasksRoute(
       json(400, { error: "newBidDeadlineSeconds required" });
       return true;
     }
-    if (!getTask(taskId)) {
-      json(404, { error: "Task not found" });
+
+    const result = await reclaimTask(taskId, input.newBidDeadlineSeconds);
+    if (!result.ok) {
+      respondFailure(json, result);
       return true;
     }
-
-    const onChain = await readOnChainTask(taskId, client);
-    if (onChain.state !== 2) {
-      json(409, { error: `Task is ${onChain.stateLabel}; reclaim requires Assigned` });
-      return true;
-    }
-    if (nowSeconds() <= onChain.submissionDeadline) {
-      json(409, { error: "Submission deadline has not passed yet" });
-      return true;
-    }
-
-    const newBidDeadline = BigInt(Math.floor(Date.now() / 1000) + input.newBidDeadlineSeconds);
-    const tx = await enqueueContractCall({
-      walletId: agentWalletId,
-      kind: "reclaim_task",
-      expectedEvent: "TaskReclaimed",
-      contractAddress: escrowAddress,
-      abiFunctionSignature: "reclaimTask(uint256,uint256)",
-      abiParameters: [taskId, newBidDeadline.toString()],
-      taskId,
-      round: onChain.round,
-    });
-
-    if (tx.status === "failed") {
-      json(502, { error: "reclaimTask failed", ...pendingHandle(tx) });
-      return true;
-    }
-
-    const stored = getTask(taskId)!;
-    upsertTask({
-      ...stored,
-      round: onChain.round + 1,
-      bidDeadline: newBidDeadline.toString(),
-      state: 0,
-    });
-
-    json(202, pendingHandle(tx));
+    json(202, pendingHandle(result.transaction));
     return true;
   }
 
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/cancel$/);
   if (req.method === "POST" && cancelMatch) {
-    const taskId = Number(cancelMatch[1]);
-    if (!getTask(taskId)) {
-      json(404, { error: "Task not found" });
+    const result = await cancelTask(Number(cancelMatch[1]));
+    if (!result.ok) {
+      respondFailure(json, result);
       return true;
     }
-
-    const onChain = await readOnChainTask(taskId, client);
-    if (onChain.state !== 0 && onChain.state !== 1) {
-      json(409, { error: `Task is ${onChain.stateLabel}; cancel requires Open or Bidding` });
-      return true;
-    }
-
-    const useAbort =
-      onChain.currentRoundBidCount > 0n || nowSeconds() <= onChain.bidDeadline;
-
-    if (useAbort) {
-      await agentContractCall(
-        json,
-        {
-          walletId: agentWalletId,
-          kind: "abort_task",
-          expectedEvent: "TaskCancelled",
-          contractAddress: escrowAddress,
-          abiFunctionSignature: "abortTask(uint256)",
-          abiParameters: [taskId],
-          taskId,
-          round: onChain.round,
-        },
-        "abortTask",
-      );
-      return true;
-    }
-
-    await agentContractCall(
-      json,
-      {
-        walletId: agentWalletId,
-        kind: "cancel_task",
-        expectedEvent: "TaskCancelled",
-        contractAddress: escrowAddress,
-        abiFunctionSignature: "cancelTask(uint256)",
-        abiParameters: [taskId],
-        taskId,
-        round: onChain.round,
-      },
-      "cancelTask",
-    );
+    json(202, pendingHandle(result.transaction));
     return true;
   }
 
   const txMatch = url.pathname.match(/^\/api\/transactions\/([0-9a-f-]+)$/);
   if (req.method === "GET" && txMatch) {
-    const tx = getRelayedTransaction(txMatch[1]);
+    const tx = await getRelayedTransaction(txMatch[1]);
     if (!tx) {
       json(404, { error: "Transaction not found" });
       return true;

@@ -9,8 +9,13 @@ export function useWorkerSession() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    setSession(getWorkerSession());
-    setReady(true);
+    const sync = () => {
+      setSession(getWorkerSession());
+      setReady(true);
+    };
+    sync();
+    window.addEventListener("levantate-session", sync);
+    return () => window.removeEventListener("levantate-session", sync);
   }, []);
 
   return { session, ready };

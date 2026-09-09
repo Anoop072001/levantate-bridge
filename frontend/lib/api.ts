@@ -1,3 +1,4 @@
+import type { SelfieCheckResult } from "@/components/SelfieCheck";
 import { backendUrl } from "./config";
 import type { Bid, RelayedTransaction, Task } from "./types";
 
@@ -37,13 +38,28 @@ export async function fetchWorkerBalance(address: string): Promise<string> {
   return data.usdcBalance;
 }
 
-export async function placeBid(taskId: number, nullifierHash: string, amountMicroUsdc: number) {
+export async function placeBid(
+  taskId: number,
+  amountMicroUsdc: number,
+  proof: SelfieCheckResult,
+  wallet?: { walletAddress?: string; linkToken?: string },
+) {
   const res = await fetch(`${backendUrl}/api/tasks/${taskId}/bids`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ nullifierHash, amount: amountMicroUsdc }),
+    body: JSON.stringify({
+      amount: amountMicroUsdc,
+      rp_id: proof.rpId,
+      idkitResponse: proof.idkitResponse,
+      signal: proof.signal,
+      signal_token: proof.signalToken,
+      walletAddress: wallet?.walletAddress,
+      linkToken: wallet?.linkToken,
+    }),
   });
-  const data = await parseJson<RelayedTransaction>(res);
+  const data = await parseJson<
+    RelayedTransaction & { nullifierHash?: string; walletAddress?: string }
+  >(res);
   if (!res.ok) throw new Error(data.error ?? "Bid failed");
   return data;
 }

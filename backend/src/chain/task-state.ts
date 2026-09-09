@@ -21,6 +21,22 @@ export interface OnChainTask {
   currentRoundBidCount: bigint;
 }
 
+/** `tasks(uint256)` return tuple — the ABI is loaded from JSON, so viem cannot infer it. */
+type TaskTuple = [
+  description: string,
+  maxBudget: bigint,
+  bidDeadline: bigint,
+  submissionWindow: bigint,
+  submissionDeadline: bigint,
+  round: bigint,
+  state: number,
+  assignedWorker: string,
+  winningBidId: bigint,
+  winningBidAmount: bigint,
+  proofHash: string,
+  currentRoundBidCount: bigint,
+];
+
 const rpcCache = new Map<number, { at: number; value: OnChainTask }>();
 const RPC_CACHE_MS = 8_000;
 
@@ -34,7 +50,7 @@ async function readOnChainTaskFromRpc(
   }
 
   const escrow = getEscrowContract(client);
-  const t = await escrow.read.tasks([BigInt(taskId)]);
+  const t = (await escrow.read.tasks([BigInt(taskId)])) as TaskTuple;
   const state = Number(t[6]);
   const value: OnChainTask = {
     description: t[0],
@@ -67,10 +83,6 @@ export async function readOnChainTask(
     /* subgraph unavailable or query error — use RPC */
   }
   return readOnChainTaskFromRpc(taskId, client);
-}
-
-export function invalidateTaskRpcCache(taskId: number): void {
-  rpcCache.delete(taskId);
 }
 
 export function nowSeconds(): bigint {

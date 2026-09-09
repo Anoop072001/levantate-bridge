@@ -3,13 +3,16 @@
 import { useEffect, useState } from "react";
 import { ARC_EXPLORER, fetchTransaction } from "@/lib/api";
 import type { RelayedTransaction } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 export function PendingTransaction({
   initial,
   onSettled,
+  className,
 }: {
   initial: RelayedTransaction;
   onSettled?: (tx: RelayedTransaction) => void;
+  className?: string;
 }) {
   const [tx, setTx] = useState(initial);
 
@@ -35,34 +38,37 @@ export function PendingTransaction({
     return () => clearInterval(id);
   }, [tx.transactionId, tx.status, onSettled]);
 
-  const statusColor =
-    tx.status === "confirmed" ? "green" : tx.status === "failed" ? "crimson" : "#666";
+  const statusClass =
+    tx.status === "confirmed"
+      ? "text-emerald-700"
+      : tx.status === "failed"
+        ? "text-red-700"
+        : "text-muted-foreground";
 
   return (
-    <div
-      style={{
-        marginTop: "1rem",
-        padding: "0.75rem",
-        border: "1px solid #ddd",
-        borderRadius: 6,
-        fontSize: "0.9rem",
-      }}
-    >
+    <div className={cn("rounded-2xl border border-border bg-card p-4 text-sm", className)}>
       <p>
-        <strong>{tx.kind}</strong> —{" "}
-        <span style={{ color: statusColor }}>{tx.status}</span>
+        <strong className="capitalize">{tx.kind}</strong> —{" "}
+        <span className={statusClass}>{tx.status}</span>
       </p>
       {tx.txHash && (
-        <p>
+        <p className="mt-1">
           Tx:{" "}
-          <a href={`${ARC_EXPLORER}/tx/${tx.txHash}`} target="_blank" rel="noreferrer">
+          <a
+            href={`${ARC_EXPLORER}/tx/${tx.txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
             {tx.txHash.slice(0, 10)}…
           </a>
         </p>
       )}
-      {tx.error && <p style={{ color: "crimson" }}>{tx.error}</p>}
-      {tx.status === "submitted" && <p style={{ color: "#666" }}>Waiting for on-chain confirmation…</p>}
-      {tx.status === "confirmed" && <p style={{ color: "green" }}>Confirmed on-chain</p>}
+      {tx.error && <p className="mt-1 text-red-700">{tx.error}</p>}
+      {tx.status === "submitted" && (
+        <p className="mt-1 text-muted-foreground">Waiting for on-chain confirmation…</p>
+      )}
+      {tx.status === "confirmed" && <p className="mt-1 text-emerald-700">Confirmed on-chain</p>}
     </div>
   );
 }

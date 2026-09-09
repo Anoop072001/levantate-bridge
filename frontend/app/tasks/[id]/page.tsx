@@ -3,20 +3,18 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { ArrowRight, Clock, Coins, MapPin } from "lucide-react";
+import { BidSheet } from "@/components/BidSheet";
 import { Countdown } from "@/components/Countdown";
+import { LinkWalletButton } from "@/components/LinkWalletButton";
+import { PageFrame } from "@/components/PageFrame";
 import { PendingTransaction } from "@/components/PendingTransaction";
-import {
-  fetchBids,
-  fetchTask,
-  fetchWorkerBalance,
-  placeBid,
-  submitProof,
-  usdcDisplayToMicro,
-  usdcMicroToDisplay,
-} from "@/lib/api";
+import { fetchBids, fetchTask, fetchWorkerBalance, submitProof, usdcMicroToDisplay } from "@/lib/api";
+import { insetButtonDarkClass } from "@/lib/cn";
+import { shortAddress, taskHeadline } from "@/lib/task-display";
+import { secondsRemaining } from "@/lib/time";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { Bid, RelayedTransaction, Task } from "@/lib/types";
-import { secondsRemaining } from "@/lib/time";
 
 export default function TaskDetailPage() {
   const params = useParams();
@@ -25,12 +23,12 @@ export default function TaskDetailPage() {
   const [task, setTask] = useState<Task | null>(null);
   const [bids, setBids] = useState<Bid[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [bidAmount, setBidAmount] = useState("");
   const [proofContent, setProofContent] = useState("");
   const [proofLink, setProofLink] = useState("");
   const [pendingTx, setPendingTx] = useState<RelayedTransaction | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [bidOpenSheet, setBidOpenSheet] = useState(false);
 
   const { session, ready } = useWorkerSession();
 
@@ -54,8 +52,6 @@ export default function TaskDetailPage() {
       .catch(() => setBalance(null));
   }, [session?.walletAddress, pendingTx?.status]);
 
-  const verifyHref = `/verify?signal=task-${taskId}-round-${task?.round ?? 0}&return=/tasks/${taskId}`;
-
   const isAssignedWorker =
     session &&
     task &&
@@ -69,31 +65,9 @@ export default function TaskDetailPage() {
       ? bids.filter((b) => b.workerAddress.toLowerCase() === session.walletAddress.toLowerCase())
       : [];
 
-  async function handleBid(e: React.FormEvent) {
-    e.preventDefault();
-    if (!session || !task) return;
-    setActionError(null);
-    try {
-      const amount = usdcDisplayToMicro(bidAmount);
-      if (amount <= 0 || amount > Number(task.maxBudget)) {
-        setActionError(`Bid must be between 0 and ${usdcMicroToDisplay(task.maxBudget)} USDC`);
-        return;
-      }
-      const amountStr = amount.toString();
-      if (myBids.some((b) => b.amount === amountStr)) {
-        setActionError("You already placed a bid for this amount on this task");
-        return;
-      }
-      const tx = await placeBid(taskId, session.nullifierHash, amount);
-      setPendingTx(tx);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Bid failed");
-    }
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!session || !task) return;
+    if (!session?.nullifierHash || !task) return;
     setActionError(null);
     try {
       const tx = await submitProof(taskId, session.nullifierHash, proofContent, proofLink || undefined);
@@ -105,184 +79,193 @@ export default function TaskDetailPage() {
 
   if (error) {
     return (
-      <main style={{ maxWidth: 720, margin: "2rem auto", padding: "0 1rem" }}>
-        <p style={{ color: "crimson" }}>{error}</p>
-        <Link href="/tasks">← Tasks</Link>
-      </main>
+      <PageFrame>
+        <p className="text-red-700">{error}</p>
+        <Link href="/tasks" className="mt-4 inline-block text-sm underline underline-offset-2">
+          ← Tasks
+        </Link>
+      </PageFrame>
     );
   }
 
   if (!task) {
     return (
-      <main style={{ maxWidth: 720, margin: "2rem auto", padding: "0 1rem" }}>
-        <p>Loading…</p>
-      </main>
+      <PageFrame>
+        <p className="text-muted-foreground">Loading…</p>
+      </PageFrame>
     );
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: "2rem auto", padding: "0 1rem", fontFamily: "system-ui" }}>
-      <p>
-        <Link href="/tasks">← Tasks</Link>
+    <PageFrame>
+      <p className="mb-8">
+        <Link href="/tasks" className="text-sm text-muted-foreground hover:text-foreground">
+          ← Tasks
+        </Link>
       </p>
 
-      <h1>Task #{task.id}</h1>
-      <p>{task.description}</p>
-      <p>
-        Budget: {usdcMicroToDisplay(task.maxBudget)} USDC · State: <strong>{task.stateLabel}</strong>{" "}
-        · Round {task.round}
-      </p>
-
-      {task.state === 0 || task.state === 1 ? (
-        <Countdown deadlineUnix={task.bidDeadline} label="Bid deadline" />
-      ) : null}
-
-      {task.state === 2 || task.state === 3 ? (
-        <Countdown deadlineUnix={task.submissionDeadline} label="Submission deadline" />
-      ) : null}
+      <div className="mb-10 space-y-4">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-4 py-1.5 text-xs font-medium tracking-wide text-muted-foreground">
+          Task #{task.id} · Round {task.round}
+        </span>
+        <h1 className="max-w-3xl text-4xl leading-[1.1] font-bold tracking-tight sm:text-5xl">
+          {taskHeadline(task.description)}
+        </h1>
+        <p className="max-w-2xl text-base leading-relaxed text-muted-foreground">{task.description}</p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <MapPin className="h-3.5 w-3.5" /> Arc testnet
+          </span>
+          <span>•</span>
+          <span className="inline-flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5" /> {task.stateLabel}
+          </span>
+          <span>•</span>
+          <span className="inline-flex items-center gap-1">
+            <Coins className="h-3.5 w-3.5" /> {usdcMicroToDisplay(task.maxBudget)} USDC
+          </span>
+        </div>
+        {task.state === 0 || task.state === 1 ? (
+          <Countdown deadlineUnix={task.bidDeadline} label="Bid deadline" className="block text-sm" />
+        ) : null}
+        {task.state === 2 || task.state === 3 ? (
+          <Countdown deadlineUnix={task.submissionDeadline} label="Submission deadline" className="block text-sm" />
+        ) : null}
+      </div>
 
       {ready && session && (
-        <p style={{ fontSize: "0.9rem", color: "#666" }}>
-          Your worker wallet: <code>{session.walletAddress}</code>
-        </p>
-      )}
-
-      {session && balance !== null && (
-        <p style={{ fontSize: "0.9rem" }}>
-          Your wallet balance: {usdcMicroToDisplay(balance)} USDC
+        <p className="mb-2 text-sm text-muted-foreground">
+          Your worker wallet: <code className="text-foreground">{shortAddress(session.walletAddress)}</code>
+          {balance !== null && (
+            <>
+              {" "}
+              · {usdcMicroToDisplay(balance)} USDC —{" "}
+              <Link href="/wallet" className="underline underline-offset-2">
+                wallet
+              </Link>
+            </>
+          )}
         </p>
       )}
 
       {bids.length > 0 && (
-        <section style={{ marginTop: "1rem" }}>
-          <h2 style={{ fontSize: "1rem" }}>Bids this round ({bids.length})</h2>
-          <ul style={{ paddingLeft: "1.25rem", fontSize: "0.9rem" }}>
-            {bids.map((bid) => {
+        <section className="mt-8">
+          <h2 className="text-base font-semibold tracking-tight">Bids this round ({bids.length})</h2>
+          <div className="mt-2">
+            {bids.map((bid, i) => {
               const mine =
-                session &&
-                bid.workerAddress.toLowerCase() === session.walletAddress.toLowerCase();
+                session && bid.workerAddress.toLowerCase() === session.walletAddress.toLowerCase();
               return (
-                <li key={bid.id} style={{ marginBottom: "0.35rem" }}>
-                  {usdcMicroToDisplay(bid.amount)} USDC —{" "}
-                  <code>{bid.workerAddress.slice(0, 10)}…</code>
-                  {mine ? " (you)" : ""}
-                </li>
+                <div
+                  key={bid.id}
+                  className={`flex items-center justify-between py-4 text-sm ${i < bids.length - 1 ? "border-b border-border" : ""}`}
+                >
+                  <span>
+                    {usdcMicroToDisplay(bid.amount)} USDC —{" "}
+                    <code>{shortAddress(bid.workerAddress)}</code>
+                    {mine ? " (you)" : ""}
+                  </span>
+                </div>
               );
             })}
-          </ul>
+          </div>
         </section>
       )}
 
-      {pendingTx && (
-        <PendingTransaction
-          initial={pendingTx}
-          onSettled={() => {
-            reload();
-            if (session?.walletAddress) {
-              fetchWorkerBalance(session.walletAddress).then(setBalance).catch(() => undefined);
-            }
-          }}
-        />
+      {pendingTx && !bidOpenSheet && (
+        <div className="mt-6">
+          <PendingTransaction
+            initial={pendingTx}
+            onSettled={() => {
+              reload();
+              if (session?.walletAddress) {
+                fetchWorkerBalance(session.walletAddress).then(setBalance).catch(() => undefined);
+              }
+            }}
+          />
+        </div>
       )}
 
-      {actionError && <p style={{ color: "crimson" }}>{actionError}</p>}
+      {actionError && <p className="mt-4 text-sm text-red-700">{actionError}</p>}
 
       {bidOpen && myBids.length > 0 && (
-        <p style={{ marginTop: "1rem", color: "#333" }}>
+        <p className="mt-6 text-sm text-foreground">
           You already bid on this task. The agent picks a winner after the bid deadline closes.
         </p>
       )}
 
       {bidOpen && (
-        <section style={{ marginTop: "1.5rem" }}>
-          <h2>{myBids.length > 0 ? "Place another bid (different amount)" : "Place a bid"}</h2>
-          {!ready ? null : !session ? (
-            <p>
-              <Link href={verifyHref}>Verify with World ID</Link> to bid on this task.
-            </p>
-          ) : (
-            <form onSubmit={handleBid}>
-              <label>
-                Amount (USDC, max {usdcMicroToDisplay(task.maxBudget)})
-                <br />
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max={usdcMicroToDisplay(task.maxBudget)}
-                  value={bidAmount}
-                  onChange={(e) => setBidAmount(e.target.value)}
-                  required
-                  style={{ width: "100%", maxWidth: 240, marginTop: 4 }}
-                />
-              </label>
-              <br />
-              <button type="submit" style={{ marginTop: "0.75rem" }}>
-                Submit bid
-              </button>
-            </form>
-          )}
-        </section>
+        <div className="mt-8">
+          <button type="button" onClick={() => setBidOpenSheet(true)} className={`${insetButtonDarkClass} h-14 px-8 text-base`}>
+            {myBids.length > 0 ? "Place another bid" : "Place a bid"}
+            <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+          </button>
+        </div>
       )}
 
-      {task.state === 2 && isAssignedWorker && (
-        <section style={{ marginTop: "1.5rem" }}>
-          <h2>Submit proof</h2>
-          <form onSubmit={handleSubmit}>
-            <label>
+      {task.state === 2 && isAssignedWorker && !session?.nullifierHash && (
+        <div className="mt-8 space-y-3">
+          <p>Reconnect this wallet to submit work.</p>
+          <LinkWalletButton label="Sign to reconnect" />
+        </div>
+      )}
+
+      {task.state === 2 && isAssignedWorker && session?.nullifierHash && (
+        <section className="mt-10 max-w-xl space-y-4 border-t border-border pt-8">
+          <h2 className="text-2xl font-bold tracking-tight">Submit proof</h2>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <label className="block text-sm">
               Summary / proof text
-              <br />
               <textarea
                 value={proofContent}
                 onChange={(e) => setProofContent(e.target.value)}
                 required
                 rows={5}
-                style={{ width: "100%", marginTop: 4 }}
+                className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
               />
             </label>
-            <br />
-            <label>
+            <label className="block text-sm">
               Optional link
-              <br />
               <input
                 type="url"
                 value={proofLink}
                 onChange={(e) => setProofLink(e.target.value)}
-                style={{ width: "100%", marginTop: 4 }}
+                className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
               />
             </label>
-            <br />
-            <button type="submit" style={{ marginTop: "0.75rem" }}>
+            <button type="submit" className={insetButtonDarkClass}>
               Submit work
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </button>
           </form>
         </section>
       )}
 
       {ready && task.state === 2 && session && !isAssignedWorker && (
-        <p style={{ marginTop: "1.5rem", color: "#666" }}>
-          You are not the assigned worker for this task.
-        </p>
+        <p className="mt-8 text-sm text-muted-foreground">You are not the assigned worker for this task.</p>
       )}
 
       {task.state === 3 && isAssignedWorker && (
-        <p style={{ marginTop: "1.5rem" }}>
-          Work submitted — waiting for agent review. You can resubmit if the agent rejects.
-        </p>
+        <p className="mt-8 text-sm">Work submitted — waiting for agent review. You can resubmit if the agent rejects.</p>
       )}
 
       {task.state === 4 && isAssignedWorker && (
-        <p style={{ marginTop: "1.5rem", color: "green" }}>
-          Paid — check your wallet balance above.
-        </p>
+        <p className="mt-8 text-sm text-emerald-700">Paid — check your wallet balance above.</p>
       )}
 
       {ready && task.state === 0 && task.round > 0 && session && (
-        <p style={{ marginTop: "1.5rem", color: "#666" }}>
-          This task was reclaimed after a missed deadline. Workers who defaulted may be barred from
-          re-bidding.
+        <p className="mt-8 text-sm text-muted-foreground">
+          This task was reclaimed after a missed deadline. Workers who defaulted may be barred from re-bidding.
         </p>
       )}
-    </main>
+
+      <BidSheet
+        task={task}
+        open={bidOpenSheet}
+        onClose={() => setBidOpenSheet(false)}
+        onSettled={reload}
+        onSubmitted={setPendingTx}
+      />
+    </PageFrame>
   );
 }

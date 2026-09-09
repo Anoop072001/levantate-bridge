@@ -36,10 +36,10 @@ async function waitForCircleTx(circleTxId: string): Promise<string | undefined> 
 
 async function submitContractCall(input: ContractCallInput): Promise<RelayedTransaction> {
   const idempotencyKey = input.idempotencyKey ?? randomUUID();
-  const existing = findRelayedByIdempotencyKey(idempotencyKey);
+  const existing = await findRelayedByIdempotencyKey(idempotencyKey);
   if (existing) return existing;
 
-  const pending = insertRelayedTransaction({
+  const pending = await insertRelayedTransaction({
     idempotencyKey,
     kind: input.kind,
     taskId: input.taskId,
@@ -76,7 +76,7 @@ async function submitContractCall(input: ContractCallInput): Promise<RelayedTran
     });
   }
 
-  updateRelayedTransaction(pending.id, { status: "submitted", circleTxId });
+  await updateRelayedTransaction(pending.id, { status: "submitted", circleTxId });
 
   try {
     const txHash = await waitForCircleTx(circleTxId);

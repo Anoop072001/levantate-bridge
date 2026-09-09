@@ -9,6 +9,7 @@ recovery_file*
 node_modules/
 .next/
 out/
+*.tsbuildinfo
 
 # Foundry — dependencies restored via `cd contracts && forge install` (see foundry.lock)
 contracts/lib/

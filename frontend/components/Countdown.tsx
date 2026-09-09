@@ -1,9 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { cn } from "@/lib/cn";
 import { formatCountdown, secondsRemaining } from "@/lib/time";
 
-export function Countdown({ deadlineUnix, label }: { deadlineUnix: string; label: string }) {
+export function Countdown({
+  deadlineUnix,
+  label,
+  className,
+}: {
+  deadlineUnix: string;
+  label?: string;
+  className?: string;
+}) {
   const [remaining, setRemaining] = useState(0);
   const [mounted, setMounted] = useState(false);
 
@@ -15,19 +24,12 @@ export function Countdown({ deadlineUnix, label }: { deadlineUnix: string; label
     return () => clearInterval(id);
   }, [deadlineUnix]);
 
-  if (!mounted) {
-    return (
-      <p style={{ color: "#333" }}>
-        {label}: …
-      </p>
-    );
-  }
-
   const expired = remaining <= 0;
+  const text = mounted ? formatCountdown(remaining) : "…";
 
   return (
-    <p style={{ color: expired ? "crimson" : "#333" }}>
-      {label}: {formatCountdown(remaining)}
-    </p>
+    <span className={cn(expired ? "text-red-700" : "text-muted-foreground", className)}>
+      {label ? `${label}: ${text}` : text}
+    </span>
   );
 }

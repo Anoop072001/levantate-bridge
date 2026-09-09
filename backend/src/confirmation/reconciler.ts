@@ -45,14 +45,14 @@ async function reconcileOne(tx: RelayedTransaction, client: PublicClient): Promi
   if (tx.expectedEvent === "Approval") {
     const outcome = await diagnoseReceipt(client, tx.txHash as `0x${string}`);
     if (outcome === "reverted") {
-      updateRelayedTransaction(tx.id, {
+      await updateRelayedTransaction(tx.id, {
         status: "failed",
         error: "USDC approval reverted on-chain",
       });
       return;
     }
     if (outcome === "success") {
-      updateRelayedTransaction(tx.id, { status: "confirmed" });
+      await updateRelayedTransaction(tx.id, { status: "confirmed" });
     }
     return;
   }
@@ -62,7 +62,7 @@ async function reconcileOne(tx: RelayedTransaction, client: PublicClient): Promi
   try {
     const indexed = await subgraphHasExpectedEvent(tx.expectedEvent, tx.txHash);
     if (indexed) {
-      updateRelayedTransaction(tx.id, { status: "confirmed" });
+      await updateRelayedTransaction(tx.id, { status: "confirmed" });
       if (tx.taskId !== undefined) {
         await syncStoredTaskFromChain(tx.taskId);
       }
@@ -77,7 +77,7 @@ async function reconcileOne(tx: RelayedTransaction, client: PublicClient): Promi
 
   const outcome = await diagnoseReceipt(client, tx.txHash as `0x${string}`);
   if (outcome === "reverted") {
-    updateRelayedTransaction(tx.id, {
+    await updateRelayedTransaction(tx.id, {
       status: "failed",
       error: `${tx.expectedEvent} transaction reverted on-chain`,
     });
@@ -86,7 +86,7 @@ async function reconcileOne(tx: RelayedTransaction, client: PublicClient): Promi
 
 export async function reconcileSubmittedTransactions(): Promise<number> {
   const client = createArcPublicClient();
-  const pending = listSubmittedRelayedTransactions();
+  const pending = await listSubmittedRelayedTransactions();
   for (const tx of pending) {
     await reconcileOne(tx, client);
   }
