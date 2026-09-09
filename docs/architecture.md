@@ -123,6 +123,7 @@ Round-2 winner selection and payout follow the same happy path with a new bidder
 
 | Endpoint | Actor | On-chain effect |
 | -------- | ----- | --------------- |
+| `POST /api/agent/chat` | Agent operator | Whichever escrow write the operator asks for, via LLM tool calling |
 | `POST /api/agent/tasks` | Agent | `postTask` (+ USDC approve) |
 | `POST /api/tasks/:id/bid` | Worker | `placeBid` via relayer |
 | `POST /api/tasks/:id/select` | Agent | `selectWinner` |

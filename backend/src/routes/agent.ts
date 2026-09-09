@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pendingHandle } from "../relayer/submit.js";
 import { deriveTaskParams, runAgentCycle, scoreBids } from "../agent/runner.js";
+import { isChatAvailable, runChatTurn, type ChatMessage } from "../agent/chat.js";
 import { postTask } from "../agent/operations.js";
 import { getTask, listBidsForTask } from "../store.js";
 import { createArcPublicClient } from "../chain/escrow.js";
@@ -33,6 +34,32 @@ export async function handleAgentRoute(
       json(200, result);
     } catch (err) {
       json(500, { error: err instanceof Error ? err.message : "Agent cycle failed" });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent/chat") {
+    json(200, { available: isChatAvailable() });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent/chat") {
+    const input = body as { messages?: ChatMessage[] };
+    const history = (input.messages ?? []).filter(
+      (m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
+    );
+    if (history.length === 0) {
+      json(400, { error: "messages required" });
+      return true;
+    }
+    if (!isChatAvailable()) {
+      json(503, { error: "Agent chat requires OPENAI_API_KEY in .env.local" });
+      return true;
+    }
+    try {
+      json(200, await runChatTurn(history));
+    } catch (err) {
+      json(502, { error: err instanceof Error ? err.message : "Agent chat failed" });
     }
     return true;
   }

@@ -102,7 +102,9 @@ Update `SUBGRAPH_QUERY_URL` in `.env.local` after deploy.
 
 ## Demo flow (single worker)
 
-1. **Post a task** — `POST /api/agent/tasks` with a description (defaults: 1h bid window, subgraph-derived budget):
+1. **Post a task** — either ask the agent in plain English at `/agent` ("post a task to collect
+   neighborhood complaints, budget 0.2 USDC, bidding open 20 minutes"), or call the API directly
+   (defaults: 1h bid window, subgraph-derived budget):
 
    ```bash
    curl -s -X POST http://localhost:3001/api/agent/tasks \
@@ -130,7 +132,16 @@ Poll any write via `GET /api/transactions/:id` — **confirmed** only when the s
 | Reclaim missed deadline | `POST /api/tasks/:id/reclaim` with `{ "newBidDeadlineSeconds": 3600 }` |
 | Cancel open task | `POST /api/tasks/:id/cancel` (`abortTask` if bids exist) |
 
-The agent loop does **not** auto-reclaim or auto-post tasks. Reclaim and new tasks require explicit API calls.
+The agent loop does **not** auto-reclaim or auto-post tasks. Reclaim and new tasks require an
+explicit API call or an instruction to the agent at `/agent`.
+
+### Agent console
+
+`/agent` is a chat front end over the same escrow operations (`POST /api/agent/chat`, needs
+`OPENAI_API_KEY`). It can list and inspect tasks, score bids against live subgraph history, post
+tasks, select winners, approve or reject work, reclaim, and cancel. It reports every write as
+*submitted* until the subgraph indexes the event, it asks before moving USDC, and it cannot bid for
+a worker or reach worker funds — there is no custodial worker wallet to reach.
 
 ## Useful API routes
 
@@ -142,6 +153,7 @@ The agent loop does **not** auto-reclaim or auto-post tasks. Reclaim and new tas
 | GET | `/api/transactions/:id` | Relayed tx status |
 | GET | `/api/agent/budget` | Subgraph-derived budget params |
 | POST | `/api/agent/run-once` | Run one agent cycle |
+| POST | `/api/agent/chat` | Operator chat agent — drives the escrow via LLM tool calling |
 | POST | `/api/wallet/challenge` | Issue the wallet-ownership message to sign |
 | POST | `/api/wallet/link` | Confirm the signature and remember the payout address |
 | GET | `/api/workers/:address/balance` | Worker USDC balance on Arc |

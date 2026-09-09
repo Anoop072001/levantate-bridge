@@ -284,6 +284,8 @@ Depends on Phase 5 — the subgraph must be live and indexing before it can be t
 - [x] Verify the selection changes appropriately when subgraph history changes — task 2 budget derived from median paid (0.65 USDC); worker scored completion=1.00 and historyFit=0.92 from task 1 payment
 - [x] **COMMIT 8** — agent decision logic working — task 1: bid scored, proof approved by OpenAI, `PaymentReleased` confirmed on subgraph
 - [x] Single guarded escrow write path in `backend/src/agent/operations.ts` — HTTP routes, the autonomous loop, and the chat agent all go through it, so task-state rules cannot drift between entry points
+- [x] Operator chat agent (`POST /api/agent/chat`, `/agent` in the frontend): OpenAI tool calling over `list_tasks`, `get_task`, `score_bids`, `post_task`, `select_winner`, `approve_work`, `reject_work`, `reclaim_task`, `cancel_task`, `get_transaction`. Verified: posted task 4 (0.2 USDC) on Arc, reported it as *submitted* until the subgraph confirmed `TaskPosted`, refused to release payment on an `Open` task, and refused to bid on a worker's behalf
+
 
 
 ## Phase 8 — Worker frontend
