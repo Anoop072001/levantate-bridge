@@ -14,6 +14,8 @@ import { cn, insetButtonDarkClass } from "@/lib/cn";
 import { useBidsQuery, useTaskProofQuery, useTaskQuery, useWorkerBalanceQuery } from "@/lib/queries";
 import { shortAddress, taskHeadline } from "@/lib/task-display";
 import { agentSelectingLabel, isAgentSelectingTask, isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
+import { needsWorldIdRestore } from "@/lib/payout-session";
+import { useRegisteredPayout } from "@/lib/use-registered-payout";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { RelayedTransaction } from "@/lib/types";
 
@@ -40,7 +42,8 @@ export default function TaskDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [bidOpenSheet, setBidOpenSheet] = useState(false);
 
-  const { session, ready } = useWorkerSession();
+  const { session, ready, connectedAddress } = useWorkerSession();
+  const { registeredPayout } = useRegisteredPayout(session?.nullifierHash, connectedAddress);
   const balanceQuery = useWorkerBalanceQuery(session?.walletAddress);
 
   const error =
@@ -193,7 +196,10 @@ export default function TaskDetailPage() {
           <div className="mt-2">
             {bids.map((bid, i) => {
               const mine =
-                session && bid.workerAddress.toLowerCase() === session.walletAddress.toLowerCase();
+                session &&
+                (session.nullifierHash && bid.nullifierHash
+                  ? bid.nullifierHash === session.nullifierHash
+                  : bid.workerAddress.toLowerCase() === session.walletAddress.toLowerCase());
               return (
                 <div
                   key={bid.id}
@@ -234,12 +240,19 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {task.state === 2 && isAssignedWorker && !session?.nullifierHash && (
-        <div className="mt-8 space-y-3">
-          <p>Reconnect this wallet to submit work.</p>
-          <LinkWalletButton label="Sign to reconnect" />
-        </div>
-      )}
+      {task.state === 2 &&
+        isAssignedWorker &&
+        needsWorldIdRestore(session, registeredPayout) && (
+          <div className="mt-8 max-w-xl space-y-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4">
+            <p className="text-sm text-amber-950">
+              Your wallet <code className="text-foreground">{shortAddress(session!.walletAddress)}</code>{" "}
+              is connected and you won this task — but this browser lost your World ID session. Sign
+              once below (free, no gas). That restores submit access; it does not change your payout
+              address.
+            </p>
+            <LinkWalletButton label="Sign to reconnect" />
+          </div>
+        )}
 
       {task.state === 2 && isAssignedWorker && session?.nullifierHash && (
         <section className="mt-10 max-w-xl space-y-4 border-t border-border pt-8">

@@ -3,7 +3,20 @@
 import { useEffect, useState } from "react";
 import { fetchRegisteredPayout } from "./api";
 import { getRegisteredNullifier, setRegisteredNullifier } from "./registered-nullifier";
+import { getWorkerSession, setWorkerSession } from "./worker-session";
 import type { RegisteredPayout } from "./payout-session";
+
+function restoreWorldIdInSession(registered: RegisteredPayout | null): void {
+  if (!registered) return;
+  const session = getWorkerSession();
+  if (
+    session?.walletAddress &&
+    session.walletAddress.toLowerCase() === registered.registeredAddress.toLowerCase() &&
+    !session.nullifierHash
+  ) {
+    setWorkerSession({ ...session, nullifierHash: registered.nullifierHash });
+  }
+}
 
 export function useRegisteredPayout(nullifierHash?: string, walletAddress?: string) {
   const [registeredPayout, setRegisteredPayout] = useState<RegisteredPayout | null>(null);
@@ -26,6 +39,7 @@ export function useRegisteredPayout(nullifierHash?: string, walletAddress?: stri
           if (byNullifier?.nullifierHash) {
             setRegisteredNullifier(byNullifier.nullifierHash);
           }
+          restoreWorldIdInSession(byNullifier);
           return;
         }
 
@@ -37,6 +51,7 @@ export function useRegisteredPayout(nullifierHash?: string, walletAddress?: stri
           if (byWallet?.nullifierHash) {
             setRegisteredNullifier(byWallet.nullifierHash);
           }
+          restoreWorldIdInSession(byWallet);
           return;
         }
 

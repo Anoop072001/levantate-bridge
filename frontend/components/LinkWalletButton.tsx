@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useSignMessage } from "wagmi";
-import { isPayoutReady, needsPayoutChange } from "@/lib/payout-session";
+import { isWalletLinkComplete, needsPayoutChange, needsWorldIdRestore } from "@/lib/payout-session";
 import { linkPayoutWallet } from "@/lib/link-wallet";
 import { useRegisteredPayout } from "@/lib/use-registered-payout";
 import { useWorkerSession } from "@/lib/use-worker-session";
@@ -35,7 +35,8 @@ export function LinkWalletButton({
   const [error, setError] = useState<string | null>(null);
 
   const payoutChangeNeeded = needsPayoutChange(registeredPayout, address, session);
-  const linked = isPayoutReady(session, address, registeredPayout);
+  const worldIdRestoreNeeded = needsWorldIdRestore(session, registeredPayout);
+  const linked = isWalletLinkComplete(session, address, registeredPayout);
 
   async function onSign() {
     if (!address) return;
@@ -55,6 +56,7 @@ export function LinkWalletButton({
     if (busy) return "Signing…";
     if (!connected) return "Connect";
     if (payoutChangeNeeded) return "Sign new wallet";
+    if (worldIdRestoreNeeded) return "Sign to reconnect";
     if (linked) return "Linked";
     return "Sign to link";
   }
@@ -65,7 +67,7 @@ export function LinkWalletButton({
         const connected = Boolean(account) || isConnected;
         const onClick = () => {
           if (!connected) openConnectModal();
-          else if (!linked || payoutChangeNeeded) void onSign();
+          else if (!linked || payoutChangeNeeded || worldIdRestoreNeeded) void onSign();
         };
         const text = buttonLabel(connected);
 
@@ -75,7 +77,9 @@ export function LinkWalletButton({
               <button
                 type="button"
                 onClick={onClick}
-                disabled={busy || !mounted || (connected && linked && !payoutChangeNeeded)}
+                disabled={
+                  busy || !mounted || (connected && linked && !payoutChangeNeeded && !worldIdRestoreNeeded)
+                }
                 className={className}
               >
                 {render({ onClick, busy, connected, linked, label: text })}
@@ -90,10 +94,12 @@ export function LinkWalletButton({
             <button
               type="button"
               onClick={onClick}
-              disabled={busy || !mounted || (connected && linked && !payoutChangeNeeded)}
+              disabled={
+                busy || !mounted || (connected && linked && !payoutChangeNeeded && !worldIdRestoreNeeded)
+              }
               className={className ?? insetButtonDarkClass}
             >
-              {connected && linked && !payoutChangeNeeded ? label : text}
+              {connected && linked && !payoutChangeNeeded && !worldIdRestoreNeeded ? label : text}
             </button>
             {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
           </div>

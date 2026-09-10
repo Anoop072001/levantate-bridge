@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
-import { setRegisteredNullifier } from "./registered-nullifier";
-import { clearWorkerSession, getWorkerSession } from "./worker-session";
+import { getRegisteredNullifier, setRegisteredNullifier } from "./registered-nullifier";
+import { clearWorkerSession, getWorkerSession, setWorkerSession } from "./worker-session";
 import { isStalePayoutSession } from "./payout-session";
 import type { WorkerSession } from "./types";
 
@@ -26,6 +26,13 @@ export function useWorkerSession() {
       } else {
         setClearedStale(false);
       }
+
+      const persistedNullifier = getRegisteredNullifier();
+      if (next && !next.nullifierHash && persistedNullifier) {
+        next = { ...next, nullifierHash: persistedNullifier };
+        setWorkerSession(next);
+      }
+
       setSession(next);
       setReady(true);
     };
