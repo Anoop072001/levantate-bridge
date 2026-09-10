@@ -1,13 +1,16 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const ROOT_ENV = resolve(import.meta.dirname, "../../.env.local");
+/** Repo root `.env.local` — primary path for local dev. */
+export const ROOT_ENV = resolve(import.meta.dirname, "../../.env.local");
 
-/** Loads repo-root `.env.local` when present (local dev). Skips if missing — e.g. Render dashboard env. */
-export function loadRootEnv(): void {
-  if (!existsSync(ROOT_ENV)) return;
+const ENV_FILE_CANDIDATES = [
+  ROOT_ENV,
+  resolve(import.meta.dirname, "../.env.local"), // backend/.env.local (Render secret file with root dir backend)
+  "/etc/secrets/.env.local",
+];
 
-  const text = readFileSync(ROOT_ENV, "utf8");
+function parseEnvFile(text: string): void {
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -15,11 +18,24 @@ export function loadRootEnv(): void {
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq);
     const value = trimmed.slice(eq + 1).trim();
-    // Platform env (Render, etc.) wins over file values.
+    // Platform env (Render dashboard, etc.) wins over file values.
     if (process.env[key] === undefined) {
       process.env[key] = value;
     }
   }
+}
+
+/** Loads `.env.local` from known paths when present. Skips if none exist — use host dashboard env. */
+export function loadRootEnv(): void {
+  for (const path of ENV_FILE_CANDIDATES) {
+    if (!existsSync(path)) continue;
+    parseEnvFile(readFileSync(path, "utf8"));
+    return;
+  }
+}
+
+export function envConfigured(name: string): boolean {
+  return Boolean(process.env[name]?.trim());
 }
 
 export function requireEnv(name: string): string {
