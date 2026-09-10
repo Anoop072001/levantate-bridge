@@ -1,13 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
 import { useAccount } from "wagmi";
+import { ChangePayoutWallet } from "@/components/ChangePayoutWallet";
 import { ConnectCta } from "@/components/ConnectCta";
 import { PageFrame } from "@/components/PageFrame";
-import { ARC_EXPLORER, fetchWorkerBalance, usdcMicroToDisplay } from "@/lib/api";
+import {
+  ARC_EXPLORER,
+  fetchRegisteredPayout,
+  fetchWorkerBalance,
+  usdcMicroToDisplay,
+} from "@/lib/api";
 import { shortAddress, usdcParts } from "@/lib/task-display";
 import { payoutSessionLabel } from "@/lib/payout-session";
 import { clearWorkerSession } from "@/lib/worker-session";
@@ -18,6 +24,29 @@ export default function WalletPage() {
   const { address: connectedAddress } = useAccount();
   const [balance, setBalance] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [registeredPayout, setRegisteredPayout] = useState<{
+    registeredAddress: string;
+    nullifierHash: string;
+  } | null>(null);
+  const registeredSession = useRef<typeof session>(null);
+
+  useEffect(() => {
+    if (session?.nullifierHash) {
+      registeredSession.current = session;
+    }
+  }, [session]);
+
+  useEffect(() => {
+    const nullifierHash =
+      session?.nullifierHash ?? registeredSession.current?.nullifierHash;
+    if (!nullifierHash) {
+      setRegisteredPayout(null);
+      return;
+    }
+    fetchRegisteredPayout({ nullifierHash })
+      .then(setRegisteredPayout)
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load registration"));
+  }, [session?.nullifierHash]);
 
   const reloadBalance = useCallback(() => {
     if (!session?.walletAddress) return;
@@ -37,6 +66,10 @@ export default function WalletPage() {
     session && connectedAddress
       ? session.walletAddress.toLowerCase() !== connectedAddress.toLowerCase()
       : false;
+  const registrationMismatch =
+    session &&
+    registeredPayout &&
+    session.walletAddress.toLowerCase() !== registeredPayout.registeredAddress.toLowerCase();
 
   return (
     <PageFrame className="max-w-xl">
@@ -103,6 +136,16 @@ export default function WalletPage() {
         </p>
       )}
 
+      {registrationMismatch && (
+        <p className="mt-8 text-center text-sm text-amber-700">
+          Your browser session shows <code>{shortAddress(session!.walletAddress)}</code>, but your
+          World ID is still registered to{" "}
+          <code>{shortAddress(registeredPayout!.registeredAddress)}</code>. Signing a new wallet
+          alone does not update registration — complete{" "}
+          <strong>Change payout wallet</strong> below (sign + Selfie Check).
+        </p>
+      )}
+
       {!session ? (
         <p className="mt-8 text-center text-sm text-muted-foreground">
           After connecting,{" "}
@@ -122,6 +165,28 @@ export default function WalletPage() {
           {payoutSessionLabel(session)} · USDC on Arc testnet · self-custodied
         </p>
       )}
+
+      {(session?.nullifierHash ?? registeredSession.current?.nullifierHash) ? (
+        <ChangePayoutWallet
+          session={
+            registeredPayout && session
+              ? { ...session, walletAddress: registeredPayout.registeredAddress }
+              : (session ?? registeredSession.current)!
+          }
+          onChanged={() => {
+            reloadBalance();
+            if (session?.nullifierHash) {
+              fetchRegisteredPayout({ nullifierHash: session.nullifierHash }).then(setRegisteredPayout);
+            }
+          }}
+        />
+      ) : session ? (
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          If you have bid before, signing a new wallet does not update your registered payout. Try
+          bidding once (the error will show your registered address), or connect your original payout
+          wallet and sign to restore your session.
+        </p>
+      ) : null}
 
       {session && (
         <p className="mt-4 text-center">

@@ -100,7 +100,18 @@ export function BidSheet({
       setBidAmount("");
       onSubmitted?.(tx);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Bid failed");
+      const e = err as Error & { registeredAddress?: string; nullifierHash?: string };
+      if (e.registeredAddress) {
+        setWorkerSession({
+          walletAddress: e.registeredAddress,
+          nullifierHash: e.nullifierHash,
+        });
+        setActionError(
+          `${e.message} Go to /wallet → Change payout wallet to move registration to a new address (sign + Selfie Check).`,
+        );
+      } else {
+        setActionError(err instanceof Error ? err.message : "Bid failed");
+      }
     }
   }
 

@@ -31,6 +31,54 @@ export async function fetchBids(taskId: number, round?: number): Promise<Bid[]> 
   return data.bids;
 }
 
+export async function fetchRegisteredPayout(params: {
+  nullifierHash?: string;
+  walletAddress?: string;
+}): Promise<{ registeredAddress: string; nullifierHash: string } | null> {
+  const qs = params.nullifierHash
+    ? `nullifierHash=${encodeURIComponent(params.nullifierHash)}`
+    : params.walletAddress
+      ? `walletAddress=${encodeURIComponent(params.walletAddress)}`
+      : null;
+  if (!qs) return null;
+  const res = await fetch(`${backendUrl}/api/worker/payout?${qs}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  const data = await parseJson<{ registeredAddress?: string; nullifierHash?: string }>(res);
+  if (!res.ok || !data.registeredAddress || !data.nullifierHash) {
+    throw new Error(data.error ?? "Failed to load registered payout");
+  }
+  return { registeredAddress: data.registeredAddress, nullifierHash: data.nullifierHash };
+}
+
+export async function changePayoutWallet(
+  newAddress: string,
+  linkToken: string,
+  proof: SelfieCheckResult,
+) {
+  const res = await fetch(`${backendUrl}/api/worker/change-payout-wallet`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      walletAddress: newAddress,
+      linkToken,
+      rp_id: proof.rpId,
+      idkitResponse: proof.idkitResponse,
+      signal: proof.signal,
+      signal_token: proof.signalToken,
+    }),
+  });
+  const data = await parseJson<{
+    walletAddress?: string;
+    nullifierHash?: string;
+    previousAddress?: string;
+    error?: string;
+  }>(res);
+  if (!res.ok || !data.walletAddress || !data.nullifierHash) {
+    throw new Error(data.error ?? "Could not change payout wallet");
+  }
+  return data as { walletAddress: string; nullifierHash: string; previousAddress: string };
+}
+
 export async function fetchWorkerBalance(address: string): Promise<string> {
   const res = await fetch(`${backendUrl}/api/workers/${address}/balance`, { cache: "no-store" });
   const data = await parseJson<{ usdcBalance: string }>(res);
@@ -58,9 +106,21 @@ export async function placeBid(
     }),
   });
   const data = await parseJson<
-    RelayedTransaction & { nullifierHash?: string; walletAddress?: string }
+    RelayedTransaction & {
+      nullifierHash?: string;
+      walletAddress?: string;
+      registeredAddress?: string;
+    }
   >(res);
-  if (!res.ok) throw new Error(data.error ?? "Bid failed");
+  if (!res.ok) {
+    const err = new Error(data.error ?? "Bid failed") as Error & {
+      registeredAddress?: string;
+      nullifierHash?: string;
+    };
+    err.registeredAddress = data.registeredAddress;
+    err.nullifierHash = data.nullifierHash;
+    throw err;
+  }
   return data;
 }
 

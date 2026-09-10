@@ -1,11 +1,20 @@
 import { backendUrl } from "./config";
-import { setWorkerSession } from "./worker-session";
+import { getWorkerSession, setWorkerSession } from "./worker-session";
 import type { WorkerSession } from "./types";
 
 export async function linkPayoutWallet(
   address: string,
   signMessage: (message: string) => Promise<string>,
 ): Promise<WorkerSession> {
+  const existing = getWorkerSession();
+  if (
+    existing?.nullifierHash &&
+    existing.walletAddress.toLowerCase() !== address.toLowerCase()
+  ) {
+    throw new Error(
+      "This World ID is already registered to a different payout address. Use Change payout wallet on /wallet (sign + Selfie Check) — signing here does not update your registration.",
+    );
+  }
   const challengeRes = await fetch(`${backendUrl}/api/wallet/challenge`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -43,7 +52,7 @@ export async function linkPayoutWallet(
 
   const session: WorkerSession = {
     walletAddress: linked.walletAddress,
-    nullifierHash: linked.nullifierHash,
+    nullifierHash: linked.nullifierHash ?? existing?.nullifierHash,
     linkToken: linked.linkToken,
   };
   setWorkerSession(session);

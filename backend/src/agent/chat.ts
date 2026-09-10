@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { transactionResponse } from "../relayer/submit.js";
+import { fundingHintFromPayload } from "../chain/agent-wallet.js";
 import {
   AGENT_OPENAI_TOOLS,
   downloadsFromToolPayload,
@@ -40,6 +41,9 @@ Rules you must follow:
 - A transaction hash is NOT success. Every write returns a relayed transaction in submitted
   status. Tell the operator to open the Arcscan link or refresh the page to see updated task
   state — there is no automatic confirmation polling.
+- Never say a task was created, cancelled, or updated unless you called the matching tool in this
+  turn and the tool result has ok: true (and task_id when posting). If you did not call the tool
+  or ok is false, report that honestly.
 - Task budgets default to a median derived live from the subgraph. Only pass max_budget_usdc when
   the operator names a specific budget.
 - Workers hold their own wallets. Payout goes straight to the worker's self-custodied address. You
@@ -53,6 +57,10 @@ Rules you must follow:
 - For select_winner, call it directly — do not call score_bids first unless the operator wants to
   see scoring reasoning. One bid can be selected without score_bids.
 - If a tool fails, report the actual error plainly and suggest the next step. Do not retry blindly.
+- Before post_task, call get_agent_wallet when the operator asks to post and you are unsure the agent
+  wallet is funded. If post_task or get_agent_wallet returns funding in the payload, tell the
+  operator to send USDC on Arc testnet to agent_address using faucet_url (Arc Testnet), then retry.
+  Always include the full agent_address so they can copy it.
 - To answer questions about submitted work (summaries, survey results, common complaints), call
   get_task and read submitted_proof.extractedContent or submitted_proof.text.
 - When the operator asks to verify, review, or evaluate submitted work, call evaluate_proof on that
@@ -64,14 +72,19 @@ Rules you must follow:
 Idle / resume behavior (there is no background agent loop):
 - After post_task succeeds, confirm task id, budget, and deadlines, tell the operator workers will
   bid on the task board, and stop. Do not call any other tools in that turn.
-- When the operator sends a later message, call get_task or list_tasks first and summarize status:
-  Open/Bidding → bids still open; Assigned → worker is working toward the submission deadline;
-  Submitted → proof is in, awaiting operator review if they ask to approve; Paid → work complete,
-  use submitted_proof to answer detail questions. Only run write tools if they explicitly request one.
+- When the operator sends a later message, call get_task or list_tasks first and summarize status
+  using submission_window_status, submission_deadline_passed, and bidding_status — do not infer
+  timing from state alone. bidding_status accepting_bids → workers can still bid. bidding_status
+  bid_deadline_passed_select_winner → call select_winner (winner loop may also run automatically).
+  bidding_status bid_deadline_passed_no_bids → no bids this round; suggest cancel_task to refund
+  escrow or post a fresh task — do not call reclaim_task (reclaim is only for Assigned after a
+  missed submission deadline). was_reclaimed true means reclaim already happened this task lifetime.
+  Assigned + submission_window_status missed_deadline → reclaim_task is available. Submitted → proof
+  review; Paid → complete. Only run write tools if they explicitly request one.
 
 Answer in short, plain sentences. Reference tasks as "task 3". No markdown headings.`;
 
-const RESUME_PROMPT = `The operator is resuming this chat after you went idle. Read current task state with get_task or list_tasks before replying. Report whether workers are still bidding, a worker is in progress, proof awaits review, or the task is paid — then answer their question. Do not post, assign, approve, or reject unless they explicitly ask.`;
+const RESUME_PROMPT = `The operator is resuming this chat after you went idle. Read current task state with get_task or list_tasks before replying. Use submission_window_status and submission_deadline_passed — if Assigned and missed_deadline, say the worker missed the deadline and reclaim is available. Otherwise report bidding, in-window work, proof review, or paid — then answer their question. Do not post, assign, approve, or reject unless they explicitly ask.`;
 
 export async function runChatTurn(
   history: ChatMessage[],
@@ -128,6 +141,7 @@ export async function runChatTurn(
       }
 
       const downloads = downloadsFromToolPayload(call.function.name, outcome.payload);
+      const funding = fundingHintFromPayload(outcome.payload);
       steps.push({
         tool: call.function.name,
         args,
@@ -135,12 +149,17 @@ export async function runChatTurn(
         summary: outcome.summary,
         transactions: outcome.transactions.map(transactionResponse),
         ...(downloads.length > 0 ? { downloads } : {}),
+        ...(funding ? { funding } : {}),
       });
 
       messages.push({
         role: "tool",
         tool_call_id: call.id,
-        content: JSON.stringify(outcome.payload),
+        content: JSON.stringify({
+          ok: outcome.ok,
+          summary: outcome.summary,
+          ...outcome.payload,
+        }),
       });
     }
   }

@@ -215,6 +215,18 @@ export async function handleTasksRoute(
 
     // Identity is read out of the proof. A stored session cannot bid for someone else.
     let worker = await findWorkerByNullifier(proof.nullifierHash);
+    if (
+      worker &&
+      walletAddress &&
+      worker.address.toLowerCase() !== walletAddress.toLowerCase()
+    ) {
+      json(409, {
+        error: `Your World ID is registered to payout address ${worker.address}. Bids always use that address on-chain. Connect it in your wallet, or complete "Change payout wallet" on /wallet before bidding with a new address.`,
+        registeredAddress: worker.address,
+        nullifierHash: worker.nullifierHash,
+      });
+      return true;
+    }
     if (!worker) {
       // Wallet link was validated before verifySelfieCheck so a spent proof is never wasted here.
       if (!walletAddress || !linkToken) {

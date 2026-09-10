@@ -21,6 +21,11 @@ import { isChatAvailable, runChatTurn, type ChatMessage } from "../agent/chat.js
 import type { AgentStep } from "../agent/tools.js";
 import { postTask } from "../agent/operations.js";
 import { getTask, listBidsForTask } from "../store.js";
+import {
+  checkAgentFunding,
+  fundingHintPayload,
+  readAgentUsdcBalance,
+} from "../chain/agent-wallet.js";
 import { createArcPublicClient } from "../chain/escrow.js";
 import { readOnChainTask } from "../chain/task-state.js";
 
@@ -31,6 +36,35 @@ export async function handleAgentRoute(
   body: unknown,
   json: (status: number, payload: unknown) => void,
 ): Promise<boolean> {
+  if (req.method === "GET" && url.pathname === "/api/agent/wallet") {
+    try {
+      const requiredParam = url.searchParams.get("requiredUsdc");
+      const requiredMicro =
+        requiredParam && Number(requiredParam) > 0
+          ? BigInt(Math.round(Number(requiredParam) * 1_000_000))
+          : 0n;
+      const { address, balanceMicro } = await readAgentUsdcBalance();
+      const check =
+        requiredMicro > 0n
+          ? await checkAgentFunding(requiredMicro)
+          : {
+              agentAddress: address,
+              balanceMicro,
+              requiredMicro: 0n,
+              sufficient: balanceMicro > 0n,
+              faucetUrl: "https://faucet.circle.com",
+            };
+      json(200, {
+        ...fundingHintPayload(check),
+        sufficient: check.sufficient,
+        balanceMicro: balanceMicro.toString(),
+      });
+    } catch (err) {
+      json(500, { error: err instanceof Error ? err.message : "Agent wallet lookup failed" });
+    }
+    return true;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/agent/budget") {
     try {
       const params = await deriveTaskParams();
@@ -213,7 +247,10 @@ export async function handleAgentRoute(
       submissionWindowSeconds: input.submissionWindowSeconds,
     });
     if (!result.ok) {
-      json(result.status, { error: result.error });
+      json(result.status, {
+        error: result.error,
+        ...(result.funding ? { funding: result.funding } : {}),
+      });
       return true;
     }
     json(202, {

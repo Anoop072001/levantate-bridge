@@ -1,3 +1,9 @@
+import {
+  checkAgentFunding,
+  fundingHintPayload,
+  insufficientFundingMessage,
+  type AgentFundingHint,
+} from "../chain/agent-wallet.js";
 import { createArcPublicClient, getEscrowAddress, getUsdcAddress } from "../chain/escrow.js";
 import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
 import { requireEnv } from "../env.js";
@@ -24,6 +30,8 @@ export interface OpFailure {
   /** Present when the call reached Circle and came back failed rather than being rejected upfront. */
   transaction?: RelayedTransaction;
   selection?: BidSelectionResult;
+  /** Present when the agent wallet lacks USDC to fund escrow. */
+  funding?: AgentFundingHint;
 }
 
 export type OpResult<T> = ({ ok: true } & T) | OpFailure;
@@ -97,6 +105,16 @@ export async function postTask(input: PostTaskInput): Promise<OpResult<{ task: P
     `[agent] posting task ${taskId} — budget=${maxBudget}, submissionWindow=${submissionWindow}, ` +
       `medianPaid=${derived?.reasoning.medianPaidAmount ?? "explicit"}`,
   );
+
+  const funding = await checkAgentFunding(maxBudget);
+  if (!funding.sufficient) {
+    return {
+      ok: false,
+      status: 402,
+      error: insufficientFundingMessage(funding),
+      funding: fundingHintPayload(funding),
+    };
+  }
 
   const approveTx = await enqueueContractCall({
     walletId: agentWalletId,

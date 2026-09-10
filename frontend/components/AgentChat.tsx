@@ -1,7 +1,17 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Check, Download, Loader2, MessageSquarePlus, Trash2, Wrench, X } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  Copy,
+  Download,
+  Loader2,
+  MessageSquarePlus,
+  Trash2,
+  Wrench,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PendingTransaction } from "@/components/PendingTransaction";
 import {
@@ -328,6 +338,51 @@ export function AgentChat() {
   );
 }
 
+function FundingCard({ funding }: { funding: NonNullable<AgentStep["funding"]> }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyAddress() {
+    try {
+      await navigator.clipboard.writeText(funding.agent_address);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="max-w-md space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+      <p className="font-medium">Fund the agent wallet on Arc testnet</p>
+      <p className="text-xs leading-relaxed">
+        Balance: {funding.balance_usdc.toFixed(2)} USDC
+        {funding.required_usdc > 0 && (
+          <> · Need: {funding.required_usdc.toFixed(2)} USDC</>
+        )}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="break-all text-xs">{funding.agent_address}</code>
+        <button
+          type="button"
+          onClick={() => void copyAddress()}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium hover:bg-amber-100"
+        >
+          <Copy className="h-3 w-3" />
+          {copied ? "Copied" : "Copy address"}
+        </button>
+      </div>
+      <a
+        href={funding.faucet_url}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-block text-xs font-medium underline underline-offset-2"
+      >
+        Open Circle faucet (select Arc Testnet)
+      </a>
+    </div>
+  );
+}
+
 function StepCard({ step }: { step: AgentStep }) {
   return (
     <AnimatePresence>
@@ -349,6 +404,7 @@ function StepCard({ step }: { step: AgentStep }) {
           </code>
           <span>{step.summary}</span>
         </div>
+        {step.funding && <FundingCard funding={step.funding} />}
         {step.downloads?.map((file) => (
           <a
             key={file.url}

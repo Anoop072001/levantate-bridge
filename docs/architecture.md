@@ -1,15 +1,14 @@
 # Levantate Bridge — architecture
 
-High-level system design with **sponsor-product labels** on each integration leg. See [`spec.md`](spec.md) for requirements and [`../AGENTS.md`](../AGENTS.md) for operational rules.
+High-level system design with **sponsor-product labels** on each integration leg. Deep dives: [`graph.md`](graph.md), [`circle-arc.md`](circle-arc.md), [`world-selfie-check.md`](world-selfie-check.md). Requirements: [`spec.md`](spec.md). Ops rules: [`../AGENTS.md`](../AGENTS.md).
 
 ## System diagram
 
 ```mermaid
 flowchart TB
   subgraph Agent["Requesting agent (backend)"]
-    AL[Agent loop<br/>budget · bid scoring · proof eval]
+    AL[Agent loop<br/>budget · bid scoring · proof eval on submit]
     RQ[Relayer queue<br/>serialized nonces · idempotency]
-    REC[Confirmation reconciler<br/>pending → confirmed]
     DB[(Supabase Postgres<br/>workers · tasks · bids · proofs · txs)]
   end
 
@@ -26,13 +25,13 @@ flowchart TB
     RP[RP signature + verify<br/>nullifier ↔ address binding]
   end
 
-  subgraph Graph["The Graph — Subgraph Studio"]
+  subgraph Graph["The Graph — Network gateway"]
     SG[(Subgraph index<br/>8 escrow events)]
-    GQL[GraphQL dev query URL]
+    GQL[GraphQL gateway + API key]
   end
 
   subgraph WorkerUI["Worker frontend (Next.js)"]
-    FE[Browse · bid · submit proof<br/>pending tx polling]
+    FE[Browse · bid · submit proof<br/>change payout wallet]
   end
 
   AL -->|"postTask · selectWinner · approveWork · rejectWork · reclaimTask · cancel/abort"| RQ
@@ -44,19 +43,16 @@ flowchart TB
   FE -->|"connect wallet + personal_sign challenge"| RP
   FE --> IDK
   IDK --> RP
-  RP -->|"bind nullifier ↔ self-custodied address"| DB
-  FE -->|"bid / submit API"| RQ
+  RP -->|"bind nullifier ↔ payout address"| DB
+  FE -->|"bid / submit / change-payout API"| RQ
   RQ --> DB
-  REC --> DB
 
   AL -->|"historical price · completion rate · missed deadlines"| GQL
   GQL --> SG
   ARC -->|"state transition events"| SG
-  REC -->|"match txHash → EscrowEvent"| GQL
-  REC -->|"confirmed only after indexed event"| AL
 
   ARC -->|"PaymentReleased"| WW
-  FE -->|"poll GET /api/transactions/:id"| REC
+  FE -->|"poll GET /api/transactions/:id"| DB
 ```
 
 ## Flow sequence (happy path)
@@ -82,12 +78,11 @@ sequenceDiagram
   W->>B: submit proof text
   B->>E: submitWork(proofHash)
   E-->>G: WorkSubmitted
-  A->>A: LLM proof evaluation
-  A->>E: approveWork
+  B->>B: LLM proof evaluation (on submit)
+  B->>E: approveWork
   E->>W: USDC winning bid
   E->>A: USDC refund (maxBudget − bid)
   E-->>G: PaymentReleased
-  B->>G: poll until EscrowEvent confirms tx
 ```
 
 ## Reclaim path (missed submission deadline)
@@ -99,55 +94,58 @@ When an assigned worker passes `submissionDeadline` without submitting:
 3. Defaulting worker is **barred** from re-bidding that task.
 4. Subgraph indexes **`TaskReclaimed`** → **`MissedDeadline`** reputation signal.
 
-Round-2 winner selection and payout follow the same happy path with a new bidder.
-
-## Sponsor mapping (what each product does here)
+## Sponsor mapping
 
 | Sponsor | Role in this repo |
 | -------- | ----------------- |
-| **Circle** | Developer-controlled **agent wallet** funds escrow; **relayer wallet** submits worker txs so workers never hold gas; `approveWork` settles USDC straight to the worker's **self-custodied** address. All settlement on **Arc testnet** native USDC (6-decimal ERC-20). |
-| **World ID** | **Selfie Check** (`selfieCheckLegacy`, sandbox) gates **every bid**, not just signup. Backend signs **`rp_context`**, verifies each proof at `developer.world.org`, rejects a `signal` that doesn't match the task/round/amount being bid, and spends each proof once. Identity is read out of the proof, never supplied by the client. A one-time registration binds the **nullifier hash** to the worker's payout address to block duplicate identities. Framed as economic-participation eligibility, not identity proof. |
-| **The Graph** | Subgraph on **`arc-testnet`** indexes all eight escrow events. Agent **queries live** for budget setting, bid scoring (price vs history, completion rate, missed deadlines). Subgraph is the **confirmation authority** — relayed txs stay `pending` until the matching event is indexed. |
+| **Circle** | Developer-controlled **agent wallet** funds escrow; **relayer wallet** submits worker txs so workers never hold gas; `approveWork` settles USDC to the worker's **self-custodied** address. All settlement on **Arc testnet** native USDC (6-decimal ERC-20). |
+| **World ID** | **Selfie Check** gates **every bid** and **payout-address changes**. Backend signs **`rp_context`**, verifies at `developer.world.org`, spends each proof once. One nullifier → one payout address at a time (rotatable with fresh Selfie Check). |
+| **The Graph** | Subgraph on **`arc-testnet`** indexes all eight escrow events. Agent queries live for budget + bid scoring. Indexed events are the confirmation authority for relayed writes. |
 
 ## Repo layout
 
 | Path | Purpose |
 | ---- | ------- |
 | `contracts/` | `TaskEscrow.sol`, Forge tests, Arc deploy script |
-| `backend/` | Marketplace API, Circle + World ID + agent logic, relayer queue, confirmation tracker, Supabase schema |
-| `frontend/` | Worker UI — tasks, Selfie Check, bid/submit, pending states |
-| `subgraph/` | Schema, mappings, Studio deploy manifest |
-| `docs/` | Spec, architecture (this file), Selfie Check feedback |
+| `backend/` | Marketplace API, Circle + World ID + agent logic, relayer queue, Supabase |
+| `frontend/` | Worker UI — tasks, Selfie Check, bid/submit, payout wallet |
+| `subgraph/` | Schema, mappings, Studio / Network deploy |
+| `docs/` | Spec, architecture, sponsor integration references |
 
 ## Key API surfaces
 
 | Endpoint | Actor | On-chain effect |
 | -------- | ----- | --------------- |
-| `POST /api/agent/chat` | Agent operator | Whichever escrow write the operator asks for, via LLM tool calling |
-| `POST /api/agent/tasks` | Agent | `postTask` (+ USDC approve) |
-| `POST /api/tasks/:id/bid` | Worker | `placeBid` via relayer |
+| `POST /api/agent/chat` | Agent operator | Escrow writes via LLM tool calling |
+| `GET /api/agent/wallet` | Agent operator | Agent wallet address, USDC balance, funding hint |
+| `POST /api/agent/tasks` | Agent | `postTask` (+ USDC approve; blocked if agent wallet underfunded) |
+| `POST /api/tasks/:id/bids` | Worker | `placeBid` via relayer + Selfie Check |
 | `POST /api/tasks/:id/select` | Agent | `selectWinner` |
-| `POST /api/tasks/:id/submit` | Worker | `submitWork(proofHash)` via relayer |
-| Agent cycle / `POST /api/agent/run-once` | Agent | `approveWork` or `rejectWork` after LLM eval |
+| `POST /api/tasks/:id/submit` | Worker | `submitWork(proofHash)` via relayer → triggers proof review |
+| `POST /api/worker/change-payout-wallet` | Worker | Updates payout address (Selfie Check + new wallet sign) |
 | `POST /api/tasks/:id/reclaim` | Agent | `reclaimTask` |
 | `POST /api/tasks/:id/cancel` | Agent | `cancelTask` or `abortTask` |
-| `POST /api/wallet/challenge` | Worker | None — issues the off-chain ownership message to sign |
-| `POST /api/wallet/link` | Worker | Consume the signature; store the payout address until the first bid binds it |
-| `POST /api/tasks/:id/bids` | Worker | Fresh Selfie Check proof, signal-bound to task/round/amount |
+| `POST /api/wallet/challenge` | Worker | Issues off-chain ownership message |
+| `POST /api/wallet/link` | Worker | Stores payout address until first bid |
 | `GET /api/workers/:address/balance` | Worker | Read USDC balance on Arc |
 
-Escrow writes return a **pending handle** (`GET /api/transactions/:id`); success is confirmed via subgraph events.
+Every escrow write goes through `backend/src/agent/operations.ts` so task-state guards live in one place.
 
-Every escrow write — HTTP route, autonomous loop, or chat agent — goes through
-`backend/src/agent/operations.ts`, so the task-state guards exist in exactly one place.
+Escrow writes return a **pending handle** (`GET /api/transactions/:id`); treat success as confirmed only when the matching subgraph event is indexed.
 
-**Key custody:** Circle holds key material for the **agent** and **relayer** wallets only. Workers hold their own keys, so a compromise of `CIRCLE_API_KEY` + `CIRCLE_ENTITY_SECRET` can disrupt the marketplace and drain the escrow float but cannot move worker earnings. There is no backend-initiated worker withdrawal path.
+**Custody:** Circle holds keys for **agent** and **relayer** only. Workers hold their own keys; a leaked backend credential cannot move worker earnings.
+
+## Agent automation
+
+| Loop | Default | Behavior |
+| ---- | ------- | -------- |
+| Winner selection | **On** (`AGENT_WINNER_LOOP`) | Every 30s after bid deadline, pick winner |
+| Proof review | **On submit** | LLM eval + approve/reject when worker submits proof |
+| Full agent cycle | Manual | `POST /api/agent/run-once` or agent chat |
 
 ## Deployed testnet artifacts
 
-Current escrow (v2, includes `abortTask` and duplicate-bid guard):
-
 - **Contract:** `0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52`
 - **Deploy block:** `61231705`
-- **Subgraph:** `https://api.studio.thegraph.com/query/1758979/levantate-bridge/v0.0.4`
+- **Subgraph id:** `Fnr7E8tC1HbD1bvdAsTXMwe5R5kZdx98pH1bhmcWWGeL` (Graph Network gateway)
 - **Explorer:** [testnet.arcscan.app](https://testnet.arcscan.app)

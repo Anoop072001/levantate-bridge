@@ -11,6 +11,13 @@ export interface AgentStepDownload {
   url: string;
 }
 
+export interface AgentFundingHint {
+  agent_address: string;
+  balance_usdc: number;
+  required_usdc: number;
+  faucet_url: string;
+}
+
 export interface AgentStep {
   tool: string;
   args: Record<string, unknown>;
@@ -18,6 +25,7 @@ export interface AgentStep {
   summary: string;
   transactions: RelayedTransaction[];
   downloads?: AgentStepDownload[];
+  funding?: AgentFundingHint;
 }
 
 export type AgentChatStatus = "active" | "idle";

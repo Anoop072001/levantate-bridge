@@ -212,6 +212,17 @@ export async function insertWorker(record: WorkerRecord): Promise<void> {
   if (error) fail("insertWorker", error);
 }
 
+export async function updateWorkerAddress(
+  nullifierHash: string,
+  newAddress: string,
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from("workers")
+    .update({ address: newAddress.toLowerCase() })
+    .ilike("nullifier_hash", nullifierHash);
+  if (error) fail("updateWorkerAddress", error);
+}
+
 export interface LinkedWallet {
   address: string;
   linkToken: string;

@@ -1,4 +1,12 @@
 import type OpenAI from "openai";
+import {
+  ARC_USDC_FAUCET_URL,
+  checkAgentFunding,
+  fundingHintPayload,
+  readAgentUsdcBalance,
+  usdcMicroToNumber,
+  type AgentFundingHint,
+} from "../chain/agent-wallet.js";
 import { createArcPublicClient } from "../chain/escrow.js";
 import { enrichAllTasks, enrichTask } from "../chain/task-view.js";
 import { transactionResponse } from "../relayer/submit.js";
@@ -38,6 +46,8 @@ export interface AgentStep {
   transactions: ReturnType<typeof transactionResponse>[];
   /** Clickable file downloads surfaced after get_task or get_proof_download. */
   downloads?: AgentStepDownload[];
+  /** Shown when post_task fails for insufficient agent USDC — copy address to fund. */
+  funding?: AgentFundingHint;
 }
 
 export interface AgentToolOutcome {
@@ -58,6 +68,53 @@ function toMicro(amountUsdc: number): string {
 function unixToIso(unix: string | bigint): string | null {
   const n = Number(unix);
   return n > 0 ? new Date(n * 1000).toISOString() : null;
+}
+
+/** Wall-clock deadline context so the chat agent does not treat stale on-chain Assigned as in-window. */
+function agentDeadlineContext(
+  state: number,
+  bidDeadline: string,
+  submissionDeadline: string,
+  bidCountThisRound: number,
+  round: number,
+) {
+  const now = Math.floor(Date.now() / 1000);
+  const bidUnix = Number(bidDeadline);
+  const subUnix = Number(submissionDeadline);
+  const bidDeadlinePassed = bidUnix > 0 && now > bidUnix;
+  const submissionDeadlinePassed = subUnix > 0 && now > subUnix;
+  const inBidPhase = state === 0 || state === 1;
+
+  let submissionWindowStatus: string;
+  if (state === 2 && subUnix > 0) {
+    submissionWindowStatus = submissionDeadlinePassed ? "missed_deadline" : "in_window";
+  } else if (state >= 3) {
+    submissionWindowStatus = "submitted_or_later";
+  } else {
+    submissionWindowStatus = "not_assigned_yet";
+  }
+
+  let biddingStatus: string;
+  if (!inBidPhase) {
+    biddingStatus = "not_in_bid_phase";
+  } else if (!bidDeadlinePassed) {
+    biddingStatus = "accepting_bids";
+  } else if (bidCountThisRound > 0) {
+    biddingStatus = "bid_deadline_passed_select_winner";
+  } else {
+    biddingStatus = "bid_deadline_passed_no_bids";
+  }
+
+  return {
+    bid_deadline_passed: bidDeadlinePassed,
+    submission_deadline_passed: submissionDeadlinePassed,
+    seconds_until_bid_deadline: bidUnix > 0 ? bidUnix - now : null,
+    seconds_until_submission_deadline: subUnix > 0 ? subUnix - now : null,
+    submission_window_status: submissionWindowStatus,
+    bidding_status: biddingStatus,
+    was_reclaimed: round > 0,
+    now_utc: new Date().toISOString(),
+  };
 }
 
 export function downloadsFromToolPayload(
@@ -118,6 +175,24 @@ export const AGENT_OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = 
         type: "object",
         properties: { task_id: { type: "integer" } },
         required: ["task_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_agent_wallet",
+      description:
+        "Show the Circle agent wallet address and USDC balance on Arc. Call before post_task if funding might be low.",
+      parameters: {
+        type: "object",
+        properties: {
+          required_usdc: {
+            type: "number",
+            description: "Optional task budget to compare against (plain USDC, e.g. 2.0).",
+          },
+        },
+        required: [],
       },
     },
   },
@@ -276,6 +351,13 @@ async function taskSummaries() {
     bid_deadline: unixToIso(t.bidDeadline),
     submission_deadline: unixToIso(t.submissionDeadline),
     bid_count_this_round: Number(t.currentRoundBidCount),
+    ...agentDeadlineContext(
+      t.state,
+      t.bidDeadline,
+      t.submissionDeadline,
+      Number(t.currentRoundBidCount),
+      t.round,
+    ),
     assigned_worker: t.assignedWorker,
   }));
 }
@@ -317,6 +399,14 @@ export async function runAgentTool(
           max_budget_usdc: usdc(task.maxBudget),
           bid_deadline: unixToIso(task.bidDeadline),
           submission_deadline: unixToIso(task.submissionDeadline),
+          bid_count_this_round: bids.length,
+          ...agentDeadlineContext(
+            task.state,
+            task.bidDeadline,
+            task.submissionDeadline,
+            bids.length,
+            task.round,
+          ),
           assigned_worker: task.assignedWorker,
           bids: bids.map((b) => ({
             bid_id: b.id,
@@ -368,6 +458,38 @@ export async function runAgentTool(
       };
     }
 
+    case "get_agent_wallet": {
+      const requiredMicro =
+        args.required_usdc === undefined
+          ? 0n
+          : BigInt(Math.round(Number(args.required_usdc) * 1_000_000));
+      const { address, balanceMicro } = await readAgentUsdcBalance();
+      const check =
+        requiredMicro > 0n
+          ? await checkAgentFunding(requiredMicro)
+          : {
+              agentAddress: address,
+              balanceMicro,
+              requiredMicro: 0n,
+              sufficient: balanceMicro > 0n,
+              faucetUrl: ARC_USDC_FAUCET_URL,
+            };
+      const hint = fundingHintPayload({
+        ...check,
+        requiredMicro: requiredMicro > 0n ? requiredMicro : 0n,
+      });
+      const summary =
+        requiredMicro > 0n && !check.sufficient
+          ? `Agent wallet underfunded — ${hint.balance_usdc.toFixed(2)} USDC available, ${hint.required_usdc.toFixed(2)} required`
+          : `Agent wallet ${address} holds ${usdcMicroToNumber(balanceMicro).toFixed(2)} USDC`;
+      return {
+        ok: check.sufficient,
+        summary,
+        payload: { funding: hint, sufficient: check.sufficient },
+        transactions: [],
+      };
+    }
+
     case "post_task": {
       const result = await postTask({
         description: String(args.description ?? ""),
@@ -382,8 +504,13 @@ export async function runAgentTool(
       if (!result.ok) {
         return {
           ok: false,
-          summary: `post_task failed: ${result.error}`,
-          payload: { error: result.error },
+          summary: result.funding
+            ? `post_task blocked — fund agent wallet (${result.funding.agent_address})`
+            : `post_task failed: ${result.error}`,
+          payload: {
+            error: result.error,
+            ...(result.funding ? { funding: result.funding } : {}),
+          },
           transactions: result.transaction ? [result.transaction] : [],
         };
       }

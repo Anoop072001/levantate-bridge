@@ -50,18 +50,34 @@ export default function TaskDetailPage() {
         ? bidsQuery.error.message
         : null;
 
-  const isAssignedWorker =
+  const myBids =
+    session && task
+      ? bids.filter((b) =>
+          session.nullifierHash
+            ? b.nullifierHash === session.nullifierHash
+            : b.workerAddress.toLowerCase() === session.walletAddress.toLowerCase(),
+        )
+      : [];
+
+  /** On-chain assignment follows the payout address registered at bid time, not always the connected wallet. */
+  const registeredPayoutAddress = myBids[0]?.workerAddress ?? session?.walletAddress;
+
+  const isAssignedWorker = Boolean(
     session &&
-    task &&
-    task.assignedWorker.toLowerCase() === session.walletAddress.toLowerCase();
+      task &&
+      registeredPayoutAddress &&
+      task.assignedWorker.toLowerCase() === registeredPayoutAddress.toLowerCase(),
+  );
+
+  const payoutWalletMismatch = Boolean(
+    isAssignedWorker &&
+      session &&
+      registeredPayoutAddress &&
+      session.walletAddress.toLowerCase() !== registeredPayoutAddress.toLowerCase(),
+  );
 
   const bidOpen = task ? isBiddingOpen(task) : false;
   const agentSelecting = task ? isAgentSelectingTask(task) : false;
-
-  const myBids =
-    session && task
-      ? bids.filter((b) => b.workerAddress.toLowerCase() === session.walletAddress.toLowerCase())
-      : [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -228,6 +244,14 @@ export default function TaskDetailPage() {
       {task.state === 2 && isAssignedWorker && session?.nullifierHash && (
         <section className="mt-10 max-w-xl space-y-4 border-t border-border pt-8">
           <h2 className="text-2xl font-bold tracking-tight">Submit proof</h2>
+          {payoutWalletMismatch && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              You won this task as payout address{" "}
+              <code className="text-foreground">{shortAddress(registeredPayoutAddress!)}</code>. Your
+              browser is connected to a different wallet — you can still submit here using your World
+              ID session. Future payouts for this task go to the winning address on-chain.
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             Submit written proof or upload a file (PDF, Word, Excel, CSV, or plain text). The agent
             reviews whichever format you choose.
@@ -322,7 +346,18 @@ export default function TaskDetailPage() {
       )}
 
       {ready && task.state === 2 && session && !isAssignedWorker && (
-        <p className="mt-8 text-sm text-muted-foreground">You are not the assigned worker for this task.</p>
+        <p className="mt-8 text-sm text-muted-foreground">
+          You are not the assigned worker for this task.
+          {myBids.length > 0 && (
+            <>
+              {" "}
+              You bid as{" "}
+              <code className="text-foreground">{shortAddress(myBids[0]!.workerAddress)}</code> but
+              the winner is{" "}
+              <code className="text-foreground">{shortAddress(task.assignedWorker)}</code>.
+            </>
+          )}
+        </p>
       )}
 
       {(task.state === 3 || task.state === 4) && proofQuery.data && (

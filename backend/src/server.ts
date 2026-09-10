@@ -5,6 +5,7 @@ import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
 import { handleAgentRoute, startWinnerSelectionLoop } from "./routes/agent.js";
 import { handleTasksRoute } from "./routes/tasks.js";
+import { handleWorkerRoute } from "./routes/worker.js";
 import { createWalletChallenge, consumeWalletChallenge } from "./wallet/challenge.js";
 import { createSignalToken, registerExpectedSignal } from "./world-id/signals.js";
 import {
@@ -80,6 +81,7 @@ const server = createServer(async (req, res) => {
   try {
     if (await handleAgentRoute(req, res, url, body, send)) return;
     if (await handleTasksRoute(req, res, url, body, send)) return;
+    if (await handleWorkerRoute(req, res, url, body, send)) return;
   } catch (err) {
     send(500, { error: err instanceof Error ? err.message : "Request failed" });
     return;
