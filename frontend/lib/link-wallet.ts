@@ -1,4 +1,5 @@
 import { backendUrl } from "./config";
+import { getRegisteredNullifier } from "./registered-nullifier";
 import { getWorkerSession, setWorkerSession } from "./worker-session";
 import type { WorkerSession } from "./types";
 
@@ -7,12 +8,13 @@ export async function linkPayoutWallet(
   signMessage: (message: string) => Promise<string>,
 ): Promise<WorkerSession> {
   const existing = getWorkerSession();
+  const knownNullifier = existing?.nullifierHash ?? getRegisteredNullifier() ?? undefined;
   if (
     existing?.nullifierHash &&
     existing.walletAddress.toLowerCase() !== address.toLowerCase()
   ) {
     throw new Error(
-      "This World ID is already registered to a different payout address. Use Change payout wallet on /wallet (sign + Selfie Check) — signing here does not update your registration.",
+      "This World ID is already registered to a different payout address. Use Change payout wallet (sign + Selfie Check) — signing here does not update your registration.",
     );
   }
   const challengeRes = await fetch(`${backendUrl}/api/wallet/challenge`, {
@@ -52,7 +54,7 @@ export async function linkPayoutWallet(
 
   const session: WorkerSession = {
     walletAddress: linked.walletAddress,
-    nullifierHash: linked.nullifierHash ?? existing?.nullifierHash,
+    nullifierHash: linked.nullifierHash ?? existing?.nullifierHash ?? knownNullifier,
     linkToken: linked.linkToken,
   };
   setWorkerSession(session);

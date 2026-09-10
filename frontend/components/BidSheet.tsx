@@ -12,8 +12,11 @@ import { useInvalidateTaskData } from "@/lib/queries";
 import { isBiddingOpen } from "@/lib/task-status";
 import { cn } from "@/lib/cn";
 import { shortAddress, taskHeadline, usdcParts } from "@/lib/task-display";
-import { isPayoutReady } from "@/lib/payout-session";
+import { ChangePayoutWallet } from "@/components/ChangePayoutWallet";
+import { isPayoutReady, needsPayoutChange } from "@/lib/payout-session";
+import { setRegisteredNullifier } from "@/lib/registered-nullifier";
 import { setWorkerSession } from "@/lib/worker-session";
+import { useRegisteredPayout } from "@/lib/use-registered-payout";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { RelayedTransaction, Task } from "@/lib/types";
 
@@ -30,6 +33,7 @@ export function BidSheet({
 }) {
   const invalidateTasks = useInvalidateTaskData();
   const { session, ready, clearedStale, connectedAddress } = useWorkerSession();
+  const { registeredPayout } = useRegisteredPayout(session?.nullifierHash, connectedAddress);
   const [activeDot, setActiveDot] = useState(0);
   const [bidAmount, setBidAmount] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -39,8 +43,9 @@ export function BidSheet({
   const bidMicro = bidAmount ? usdcDisplayToMicro(bidAmount) : 0;
   const canBid = Boolean(task && isBiddingOpen(task));
   const bidAmountValid = canBid && bidMicro > 0 && bidMicro <= Number(task?.maxBudget ?? 0);
-  const payoutReady = isPayoutReady(session, connectedAddress);
-  const needsWalletLink = ready && !payoutReady;
+  const payoutChangeNeeded = needsPayoutChange(registeredPayout, connectedAddress, session);
+  const payoutReady = isPayoutReady(session, connectedAddress, registeredPayout);
+  const needsWalletLink = ready && !payoutReady && !payoutChangeNeeded;
 
   const slides = useMemo(() => {
     if (!task) return [];
@@ -79,15 +84,17 @@ export function BidSheet({
   async function handleBid(proof: SelfieCheckResult) {
     if (!task) return;
     setActionError(null);
-    if (!isPayoutReady(session, connectedAddress)) {
+    if (!isPayoutReady(session, connectedAddress, registeredPayout)) {
       setActionError(
-        "Link your payout wallet first — tap Wallet, connect, and sign. Selfie Check cannot run until that is done.",
+        payoutChangeNeeded
+          ? "Your World ID is registered to a different payout address. Complete Change payout wallet below (sign + Selfie Check) before bidding."
+          : "Link your payout wallet first — tap Wallet, connect, and sign. Selfie Check cannot run until that is done.",
       );
       return;
     }
     try {
       const tx = await placeBid(task.id, bidMicro, proof, {
-        walletAddress: session!.walletAddress,
+        walletAddress: registeredPayout?.registeredAddress ?? session!.walletAddress,
         linkToken: session!.linkToken,
       });
       if (tx.walletAddress) {
@@ -102,12 +109,15 @@ export function BidSheet({
     } catch (err) {
       const e = err as Error & { registeredAddress?: string; nullifierHash?: string };
       if (e.registeredAddress) {
+        if (e.nullifierHash) {
+          setRegisteredNullifier(e.nullifierHash);
+        }
         setWorkerSession({
           walletAddress: e.registeredAddress,
           nullifierHash: e.nullifierHash,
         });
         setActionError(
-          `${e.message} Go to /wallet → Change payout wallet to move registration to a new address (sign + Selfie Check).`,
+          `${e.message} Complete Change payout wallet below (sign + Selfie Check) before bidding again.`,
         );
       } else {
         setActionError(err instanceof Error ? err.message : "Bid failed");
@@ -254,7 +264,7 @@ export function BidSheet({
                     <SelfieCheckButton
                       signal={bidSignal(task.id, task.round, bidMicro)}
                       label="Selfie Check"
-                      disabled={!bidAmountValid || needsWalletLink}
+                      disabled={!bidAmountValid || needsWalletLink || payoutChangeNeeded}
                       onVerified={handleBid}
                       onError={setActionError}
                       className="group flex cursor-pointer flex-col items-center gap-3 disabled:cursor-not-allowed disabled:opacity-40"
@@ -284,12 +294,26 @@ export function BidSheet({
                   <p className="px-6 text-center text-xs leading-relaxed text-muted-foreground">
                     {!canBid
                       ? "Bidding is closed on this task."
-                      : clearedStale
-                        ? "A previous payout wallet was cleared because it did not match your connected wallet. Tap Wallet and sign again."
-                        : needsWalletLink
-                          ? "First step: tap Wallet, connect, and sign to link your payout address. Then enter an amount and run Selfie Check."
-                          : `Enter an amount up to ${maxDisplay} USDC, then Selfie Check to submit.`}
+                      : payoutChangeNeeded
+                        ? `Your World ID pays out to ${shortAddress(registeredPayout!.registeredAddress)}. Connect your new wallet, sign, then Selfie Check below to move registration before bidding.`
+                        : clearedStale
+                          ? "A previous payout wallet was cleared because it did not match your connected wallet. Tap Wallet and sign again."
+                          : needsWalletLink
+                            ? "First step: tap Wallet, connect, and sign to link your payout address. Then enter an amount and run Selfie Check."
+                            : `Enter an amount up to ${maxDisplay} USDC, then Selfie Check to submit.`}
                   </p>
+
+                  {payoutChangeNeeded && registeredPayout && (
+                    <div className="mx-4 mt-4">
+                      <ChangePayoutWallet
+                        session={{
+                          walletAddress: registeredPayout.registeredAddress,
+                          nullifierHash: registeredPayout.nullifierHash,
+                        }}
+                        onChanged={() => setActionError(null)}
+                      />
+                    </div>
+                  )}
 
                   {actionError && (
                     <p

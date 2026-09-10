@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
 import { useAccount } from "wagmi";
@@ -10,50 +10,35 @@ import { ConnectCta } from "@/components/ConnectCta";
 import { PageFrame } from "@/components/PageFrame";
 import {
   ARC_EXPLORER,
-  fetchRegisteredPayout,
   fetchWorkerBalance,
   usdcMicroToDisplay,
 } from "@/lib/api";
+import { needsPayoutChange, payoutSessionLabel } from "@/lib/payout-session";
 import { shortAddress, usdcParts } from "@/lib/task-display";
-import { payoutSessionLabel } from "@/lib/payout-session";
+import { useRegisteredPayout } from "@/lib/use-registered-payout";
 import { clearWorkerSession } from "@/lib/worker-session";
 import { useWorkerSession } from "@/lib/use-worker-session";
 
 export default function WalletPage() {
   const { session, ready, clearedStale } = useWorkerSession();
   const { address: connectedAddress } = useAccount();
+  const { registeredPayout, error: registrationError } = useRegisteredPayout(
+    session?.nullifierHash,
+    connectedAddress,
+  );
   const [balance, setBalance] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [registeredPayout, setRegisteredPayout] = useState<{
-    registeredAddress: string;
-    nullifierHash: string;
-  } | null>(null);
-  const registeredSession = useRef<typeof session>(null);
 
-  useEffect(() => {
-    if (session?.nullifierHash) {
-      registeredSession.current = session;
-    }
-  }, [session]);
-
-  useEffect(() => {
-    const nullifierHash =
-      session?.nullifierHash ?? registeredSession.current?.nullifierHash;
-    if (!nullifierHash) {
-      setRegisteredPayout(null);
-      return;
-    }
-    fetchRegisteredPayout({ nullifierHash })
-      .then(setRegisteredPayout)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load registration"));
-  }, [session?.nullifierHash]);
+  const displayAddress =
+    registeredPayout?.registeredAddress ?? session?.walletAddress ?? null;
 
   const reloadBalance = useCallback(() => {
-    if (!session?.walletAddress) return;
-    fetchWorkerBalance(session.walletAddress)
+    const address = registeredPayout?.registeredAddress ?? session?.walletAddress;
+    if (!address) return;
+    fetchWorkerBalance(address)
       .then(setBalance)
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load balance"));
-  }, [session?.walletAddress]);
+  }, [registeredPayout?.registeredAddress, session?.walletAddress]);
 
   useEffect(() => {
     reloadBalance();
@@ -66,10 +51,7 @@ export default function WalletPage() {
     session && connectedAddress
       ? session.walletAddress.toLowerCase() !== connectedAddress.toLowerCase()
       : false;
-  const registrationMismatch =
-    session &&
-    registeredPayout &&
-    session.walletAddress.toLowerCase() !== registeredPayout.registeredAddress.toLowerCase();
+  const payoutChangeNeeded = needsPayoutChange(registeredPayout, connectedAddress, session);
 
   return (
     <PageFrame className="max-w-xl">
@@ -90,7 +72,7 @@ export default function WalletPage() {
         >
           <AnimatePresence mode="wait">
             <motion.div
-              key={session?.walletAddress ?? "empty"}
+              key={displayAddress ?? "empty"}
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
@@ -98,10 +80,10 @@ export default function WalletPage() {
             >
               <div className="mb-10 flex items-center justify-between">
                 <span className="text-[1.1rem] font-medium text-muted-foreground/80">
-                  {session ? "Payout wallet" : "Not linked"}
+                  {displayAddress ? "Registered payout" : "Not linked"}
                 </span>
                 <span className="text-[1.1rem] font-medium tracking-widest text-muted-foreground/60">
-                  {session ? shortAddress(session.walletAddress) : "••••"}
+                  {displayAddress ? shortAddress(displayAddress) : "••••"}
                 </span>
               </div>
               <div className="flex items-end justify-between">
@@ -109,9 +91,9 @@ export default function WalletPage() {
                   ${parts.whole}
                   <span className="text-4xl font-semibold text-muted-foreground/80">{parts.cents}</span>
                 </div>
-                {session && (
+                {displayAddress && (
                   <a
-                    href={`${ARC_EXPLORER}/address/${session.walletAddress}`}
+                    href={`${ARC_EXPLORER}/address/${displayAddress}`}
                     target="_blank"
                     rel="noreferrer"
                     className="mb-1 p-1 text-muted-foreground/40 transition-colors hover:text-foreground"
@@ -132,21 +114,31 @@ export default function WalletPage() {
       {clearedStale && (
         <p className="mt-8 text-center text-sm text-amber-700">
           A stored payout wallet from a previous session was cleared because it did not match your
-          connected wallet.
+          connected wallet. If you are a registered worker, use Change payout wallet below.
         </p>
       )}
 
-      {registrationMismatch && (
+      {payoutChangeNeeded && registeredPayout && (
         <p className="mt-8 text-center text-sm text-amber-700">
-          Your browser session shows <code>{shortAddress(session!.walletAddress)}</code>, but your
-          World ID is still registered to{" "}
-          <code>{shortAddress(registeredPayout!.registeredAddress)}</code>. Signing a new wallet
-          alone does not update registration — complete{" "}
-          <strong>Change payout wallet</strong> below (sign + Selfie Check).
+          Your World ID pays out to{" "}
+          <code>{shortAddress(registeredPayout.registeredAddress)}</code>
+          {session?.walletAddress &&
+          session.walletAddress.toLowerCase() !== registeredPayout.registeredAddress.toLowerCase() ? (
+            <>
+              , but your browser session shows <code>{shortAddress(session.walletAddress)}</code>
+            </>
+          ) : connectedAddress &&
+            connectedAddress.toLowerCase() !== registeredPayout.registeredAddress.toLowerCase() ? (
+            <>
+              , but you are connected as <code>{shortAddress(connectedAddress)}</code>
+            </>
+          ) : null}
+          . Signing alone does not update registration — complete <strong>Change payout wallet</strong>{" "}
+          below (sign + Selfie Check).
         </p>
       )}
 
-      {!session ? (
+      {!session && !registeredPayout ? (
         <p className="mt-8 text-center text-sm text-muted-foreground">
           After connecting,{" "}
           <Link href="/verify?return=/wallet" className="underline underline-offset-2">
@@ -154,37 +146,31 @@ export default function WalletPage() {
           </Link>
           .
         </p>
-      ) : mismatch ? (
+      ) : mismatch && !payoutChangeNeeded ? (
         <p className="mt-8 text-center text-sm text-amber-700">
           Your browser is connected as <code>{shortAddress(connectedAddress!)}</code>, but your
-          payout address is <code>{shortAddress(session.walletAddress)}</code>. Earnings go to the
+          payout address is <code>{shortAddress(session!.walletAddress)}</code>. Earnings go to the
           payout address — switch accounts in your wallet if you expected them to match.
         </p>
       ) : (
         <p className="mt-8 text-center text-xs text-muted-foreground">
-          {payoutSessionLabel(session)} · USDC on Arc testnet · self-custodied
+          {payoutSessionLabel(session, registeredPayout)} · USDC on Arc testnet · self-custodied
         </p>
       )}
 
-      {(session?.nullifierHash ?? registeredSession.current?.nullifierHash) ? (
+      {registeredPayout ? (
         <ChangePayoutWallet
-          session={
-            registeredPayout && session
-              ? { ...session, walletAddress: registeredPayout.registeredAddress }
-              : (session ?? registeredSession.current)!
-          }
-          onChanged={() => {
-            reloadBalance();
-            if (session?.nullifierHash) {
-              fetchRegisteredPayout({ nullifierHash: session.nullifierHash }).then(setRegisteredPayout);
-            }
+          session={{
+            walletAddress: registeredPayout.registeredAddress,
+            nullifierHash: registeredPayout.nullifierHash,
           }}
+          onChanged={reloadBalance}
         />
       ) : session ? (
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          If you have bid before, signing a new wallet does not update your registered payout. Try
-          bidding once (the error will show your registered address), or connect your original payout
-          wallet and sign to restore your session.
+          First bid binds this wallet to your World ID. If you have bid before on another device,
+          connect your registered payout wallet and sign to restore it, or bid once to see your
+          registered address.
         </p>
       ) : null}
 
@@ -200,7 +186,9 @@ export default function WalletPage() {
         </p>
       )}
 
-      {error && <p className="mt-4 text-center text-sm text-red-700">{error}</p>}
+      {(error || registrationError) && (
+        <p className="mt-4 text-center text-sm text-red-700">{error ?? registrationError}</p>
+      )}
     </PageFrame>
   );
 }

@@ -1,4 +1,5 @@
 import type { WorkerSession } from "./types";
+import { setRegisteredNullifier } from "./registered-nullifier";
 
 const KEY = "levantate-worker-session";
 
@@ -14,6 +15,9 @@ export function getWorkerSession(): WorkerSession | null {
 }
 
 export function setWorkerSession(session: WorkerSession): void {
+  if (session.nullifierHash) {
+    setRegisteredNullifier(session.nullifierHash);
+  }
   localStorage.setItem(KEY, JSON.stringify(session));
   window.dispatchEvent(new Event("levantate-session"));
 }

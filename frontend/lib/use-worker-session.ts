@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
+import { setRegisteredNullifier } from "./registered-nullifier";
 import { clearWorkerSession, getWorkerSession } from "./worker-session";
 import { isStalePayoutSession } from "./payout-session";
 import type { WorkerSession } from "./types";
@@ -16,6 +17,9 @@ export function useWorkerSession() {
     const sync = () => {
       let next = getWorkerSession();
       if (isStalePayoutSession(next, connectedAddress)) {
+        if (next?.nullifierHash) {
+          setRegisteredNullifier(next.nullifierHash);
+        }
         clearWorkerSession();
         next = null;
         setClearedStale(true);

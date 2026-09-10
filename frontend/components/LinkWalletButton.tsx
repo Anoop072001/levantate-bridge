@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useSignMessage } from "wagmi";
-import { isPayoutReady } from "@/lib/payout-session";
+import { isPayoutReady, needsPayoutChange } from "@/lib/payout-session";
 import { linkPayoutWallet } from "@/lib/link-wallet";
+import { useRegisteredPayout } from "@/lib/use-registered-payout";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { WorkerSession } from "@/lib/types";
 import { insetButtonDarkClass } from "@/lib/cn";
@@ -28,11 +29,13 @@ export function LinkWalletButton({
 }) {
   const { address, isConnected } = useAccount();
   const { session } = useWorkerSession();
+  const { registeredPayout } = useRegisteredPayout(session?.nullifierHash, address);
   const { signMessageAsync } = useSignMessage();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const linked = isPayoutReady(session, address);
+  const payoutChangeNeeded = needsPayoutChange(registeredPayout, address, session);
+  const linked = isPayoutReady(session, address, registeredPayout);
 
   async function onSign() {
     if (!address) return;
@@ -51,6 +54,7 @@ export function LinkWalletButton({
   function buttonLabel(connected: boolean): string {
     if (busy) return "Signing…";
     if (!connected) return "Connect";
+    if (payoutChangeNeeded) return "Sign new wallet";
     if (linked) return "Linked";
     return "Sign to link";
   }
@@ -61,7 +65,7 @@ export function LinkWalletButton({
         const connected = Boolean(account) || isConnected;
         const onClick = () => {
           if (!connected) openConnectModal();
-          else if (!linked) void onSign();
+          else if (!linked || payoutChangeNeeded) void onSign();
         };
         const text = buttonLabel(connected);
 
@@ -71,7 +75,7 @@ export function LinkWalletButton({
               <button
                 type="button"
                 onClick={onClick}
-                disabled={busy || !mounted || (connected && linked)}
+                disabled={busy || !mounted || (connected && linked && !payoutChangeNeeded)}
                 className={className}
               >
                 {render({ onClick, busy, connected, linked, label: text })}
@@ -86,10 +90,10 @@ export function LinkWalletButton({
             <button
               type="button"
               onClick={onClick}
-              disabled={busy || !mounted || (connected && linked)}
+              disabled={busy || !mounted || (connected && linked && !payoutChangeNeeded)}
               className={className ?? insetButtonDarkClass}
             >
-              {connected && linked ? label : text}
+              {connected && linked && !payoutChangeNeeded ? label : text}
             </button>
             {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
           </div>
