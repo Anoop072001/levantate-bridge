@@ -9,14 +9,13 @@ import {
 } from "../chain/agent-wallet.js";
 import { createArcPublicClient } from "../chain/escrow.js";
 import { enrichAllTasks, enrichTask } from "../chain/task-view.js";
-import { transactionResponse } from "../relayer/submit.js";
+import { relayChainStatus, transactionResponse } from "../relayer/submit.js";
 import {
   getProof,
   getRelayedTransaction,
   getTask,
   listBidsForTask,
   listTasks,
-  type RelayedTransaction,
 } from "../store.js";
 import {
   approveWork,
@@ -54,7 +53,7 @@ export interface AgentToolOutcome {
   ok: boolean;
   summary: string;
   payload: unknown;
-  transactions: RelayedTransaction[];
+  transactions: ReturnType<typeof transactionResponse>[];
 }
 
 function usdc(micro: string | bigint): number {
@@ -328,7 +327,7 @@ export const AGENT_OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = 
     function: {
       name: "get_transaction",
       description:
-        "Stored relayed transaction record (hash and submission status). Task state updates when the operator refreshes the page.",
+        "Stored relayed transaction record. Status is confirmed or failed once Arc RPC returns a receipt.",
       parameters: {
         type: "object",
         properties: { transaction_id: { type: "string" } },
@@ -511,7 +510,7 @@ export async function runAgentTool(
             error: result.error,
             ...(result.funding ? { funding: result.funding } : {}),
           },
-          transactions: result.transaction ? [result.transaction] : [],
+          transactions: result.transaction ? [transactionResponse(result.transaction)] : [],
         };
       }
       return {
@@ -530,9 +529,9 @@ export async function runAgentTool(
                 used_defaults: result.task.budgetReasoning.usedDefaults,
               }
             : "explicit",
-          status: "submitted, not yet confirmed on-chain",
+          status: relayChainStatus(result.task.transactions[result.task.transactions.length - 1]!),
         },
-        transactions: result.task.transactions,
+        transactions: result.task.transactions.map(transactionResponse),
       };
     }
 
@@ -547,7 +546,7 @@ export async function runAgentTool(
           ok: false,
           summary: `select_winner failed: ${result.error}`,
           payload: { error: result.error, scoring: result.selection?.reasoning.message ?? null },
-          transactions: result.transaction ? [result.transaction] : [],
+          transactions: result.transaction ? [transactionResponse(result.transaction)] : [],
         };
       }
       return {
@@ -558,9 +557,9 @@ export async function runAgentTool(
           bid_id: result.bidId,
           worker: result.workerAddress,
           scoring: result.selection?.reasoning.message ?? "explicit bid id",
-          status: "submitted, not yet confirmed on-chain",
+          status: relayChainStatus(result.transaction),
         },
-        transactions: [result.transaction],
+        transactions: [transactionResponse(result.transaction)],
       };
     }
 
@@ -622,7 +621,7 @@ export async function runAgentTool(
           ok: false,
           summary: `${name} failed: ${result.error}`,
           payload: { error: result.error },
-          transactions: result.transaction ? [result.transaction] : [],
+          transactions: result.transaction ? [transactionResponse(result.transaction)] : [],
         };
       }
       return {
@@ -630,12 +629,12 @@ export async function runAgentTool(
         summary: approve ? `Approved task ${taskId}` : `Rejected work on task ${taskId}`,
         payload: {
           task_id: taskId,
-          status: "submitted, not yet confirmed on-chain",
+          status: relayChainStatus(result.transaction),
           note: approve
-            ? "Payout lands in the worker's self-custodied wallet once PaymentReleased is indexed."
-            : "Task returns to Assigned with a refreshed submission deadline once indexed.",
+            ? "Payout lands in the worker's self-custodied wallet once the receipt succeeds."
+            : "Task returns to Assigned with a refreshed submission deadline once confirmed.",
         },
-        transactions: [result.transaction],
+        transactions: [transactionResponse(result.transaction)],
       };
     }
 
@@ -650,14 +649,18 @@ export async function runAgentTool(
           ok: false,
           summary: `reclaim_task failed: ${result.error}`,
           payload: { error: result.error },
-          transactions: result.transaction ? [result.transaction] : [],
+          transactions: result.transaction ? [transactionResponse(result.transaction)] : [],
         };
       }
       return {
         ok: true,
         summary: `Reclaimed task ${taskId} into round ${result.round}`,
-        payload: { task_id: taskId, round: result.round, status: "submitted, not yet confirmed on-chain" },
-        transactions: [result.transaction],
+        payload: {
+          task_id: taskId,
+          round: result.round,
+          status: relayChainStatus(result.transaction),
+        },
+        transactions: [transactionResponse(result.transaction)],
       };
     }
 
@@ -669,7 +672,7 @@ export async function runAgentTool(
           ok: false,
           summary: `cancel_task failed: ${result.error}`,
           payload: { error: result.error },
-          transactions: result.transaction ? [result.transaction] : [],
+          transactions: result.transaction ? [transactionResponse(result.transaction)] : [],
         };
       }
       return {
@@ -678,9 +681,9 @@ export async function runAgentTool(
         payload: {
           task_id: taskId,
           method: result.aborted ? "abortTask" : "cancelTask",
-          status: "submitted, not yet confirmed on-chain",
+          status: relayChainStatus(result.transaction),
         },
-        transactions: [result.transaction],
+        transactions: [transactionResponse(result.transaction)],
       };
     }
 
@@ -738,7 +741,7 @@ export async function runAgentTool(
         ok: true,
         summary: `Transaction ${tx.kind} is ${tx.status}`,
         payload: transactionResponse(tx),
-        transactions: [tx],
+        transactions: [transactionResponse(tx)],
       };
     }
 

@@ -100,7 +100,7 @@ When an assigned worker passes `submissionDeadline` without submitting:
 | -------- | ----------------- |
 | **Circle** | Developer-controlled **agent wallet** funds escrow; **relayer wallet** submits worker txs so workers never hold gas; `approveWork` settles USDC to the worker's **self-custodied** address. All settlement on **Arc testnet** native USDC (6-decimal ERC-20). |
 | **World ID** | **Selfie Check** gates **every bid** and **payout-address changes**. Backend signs **`rp_context`**, verifies at `developer.world.org`, spends each proof once. One nullifier → one payout address at a time (rotatable with fresh Selfie Check). |
-| **The Graph** | Subgraph on **`arc-testnet`** indexes all eight escrow events. Agent queries live for budget + bid scoring. Indexed events are the confirmation authority for relayed writes. |
+| **The Graph** | Subgraph on **`arc-testnet`** indexes all eight escrow events. Agent queries live for budget + bid scoring. Relayed writes are confirmed via Arc RPC receipts, not subgraph indexing lag. |
 
 ## Repo layout
 

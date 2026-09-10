@@ -137,7 +137,7 @@ export function registerLevantateMcpTools(server: McpServer): void {
   server.registerTool(
     "get_transaction",
     {
-      description: "Look up a relayed transaction by id (hash and status).",
+      description: "Look up a relayed transaction by id. Status is confirmed/failed after Arc RPC receipt.",
       inputSchema: z.object({ transaction_id: z.string() }),
     },
     async ({ transaction_id }) =>

@@ -241,7 +241,10 @@ export function BidSheet({
 
               {pendingTx ? (
                 <div className="px-4 pb-6">
-                  <PendingTransaction initial={pendingTx} />
+                  <PendingTransaction
+                    initial={pendingTx}
+                    onSettled={() => task && invalidateTasks(task.id)}
+                  />
                 </div>
               ) : (
                 <>

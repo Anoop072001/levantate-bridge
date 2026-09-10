@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
+import { reconcileSubmittedTransactions } from "./relayer/reconcile.js";
 import { handleAgentRoute, startWinnerSelectionLoop } from "./routes/agent.js";
 import { handleTasksRoute } from "./routes/tasks.js";
 import { handleWorkerRoute } from "./routes/worker.js";
@@ -14,6 +15,9 @@ import {
 } from "./store.js";
 
 loadRootEnv();
+void reconcileSubmittedTransactions().then((n) => {
+  if (n > 0) console.log(`[relayer] reconciled ${n} submitted transaction(s) via RPC receipt`);
+});
 if (process.env.AGENT_WINNER_LOOP !== "false") {
   startWinnerSelectionLoop();
 }

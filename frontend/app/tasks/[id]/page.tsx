@@ -11,7 +11,13 @@ import { PageFrame } from "@/components/PageFrame";
 import { PendingTransaction } from "@/components/PendingTransaction";
 import { submitProofFile, submitProofText, usdcMicroToDisplay } from "@/lib/api";
 import { cn, insetButtonDarkClass } from "@/lib/cn";
-import { useBidsQuery, useTaskProofQuery, useTaskQuery, useWorkerBalanceQuery } from "@/lib/queries";
+import {
+  useBidsQuery,
+  useInvalidateTaskData,
+  useTaskProofQuery,
+  useTaskQuery,
+  useWorkerBalanceQuery,
+} from "@/lib/queries";
 import { shortAddress, taskHeadline } from "@/lib/task-display";
 import { agentSelectingLabel, isAgentSelectingTask, isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
 import { needsWorldIdRestore } from "@/lib/payout-session";
@@ -42,6 +48,7 @@ export default function TaskDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [bidOpenSheet, setBidOpenSheet] = useState(false);
 
+  const invalidateTasks = useInvalidateTaskData();
   const { session, ready, connectedAddress } = useWorkerSession();
   const { registeredPayout } = useRegisteredPayout(session?.nullifierHash, connectedAddress);
   const balanceQuery = useWorkerBalanceQuery(session?.walletAddress);
@@ -219,7 +226,7 @@ export default function TaskDetailPage() {
 
       {pendingTx && !bidOpenSheet && (
         <div className="mt-6">
-          <PendingTransaction initial={pendingTx} />
+          <PendingTransaction initial={pendingTx} onSettled={() => invalidateTasks(taskId)} />
         </div>
       )}
 

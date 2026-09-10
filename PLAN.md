@@ -56,13 +56,13 @@ landing near the deadline would leave no time to resubmit. Every reclaim emits `
 the subgraph indexes as a per-worker reputation signal.
 - **D6 — Relayed transaction confirmation.** A transaction hash means *submitted*, never *succeeded*.
 Every relayed transaction is persisted before submission with a UUID v4 idempotency key, moves to
-`pending` once a hash comes back, and only reaches `confirmed` when its event surfaces in the
-subgraph. Retries reuse the same idempotency key so Circle returns the original transaction instead
-of double-submitting. All submissions from one wallet pass through a single-concurrency FIFO queue
-(agent wallet and relayer wallet get separate queues) because concurrent sends from one EVM wallet
-race on nonce assignment. "Event not indexed yet" is `pending`, not `failed`; only a timeout
-escalates, and the RPC receipt is used to diagnose a genuine revert while the subgraph stays the
-authority for declaring success.
+`submitted` once a hash comes back, and reaches `confirmed` or `failed` from the **Arc RPC receipt**
+(`status = 1` → confirmed, `status = 0` → failed). Retries reuse the same idempotency key so Circle
+returns the original transaction instead of double-submitting. All submissions from one wallet pass
+through a single-concurrency FIFO queue (agent wallet and relayer wallet get separate queues)
+because concurrent sends from one EVM wallet race on nonce assignment. If receipt polling times out,
+the row stays `submitted` until startup reconcile or the next poll finishes it. The subgraph is for
+agent budgeting and bid scoring only — not write confirmation.
 
 - **D8 — Selfie Check runs per bid, not once per worker (revised 2026-09-09).** A one-time
 verification that gets cached client-side is not an anti-bot control: once a human verifies, a
@@ -254,16 +254,11 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 
 ## Phase 6 — Transaction confirmation tracker (D6)
 
-Depends on Phase 5 — the subgraph must be live and indexing before it can be the source of truth.
-
-- [x] Reconciler that polls the subgraph for the expected event of each `submitted` relayed transaction, matching on `transactionHash` via `EscrowEvent`
-- [x] On match, mark `confirmed` and advance the backend's task state; on no match, leave `pending` — "not indexed yet" is never `failed`
-- [x] Timeout escalation: after a bounded wait, fetch the RPC receipt to distinguish a reverted transaction from indexing lag, mark `failed` only on a confirmed revert, and record the revert reason
-- [x] Recovery on startup: re-reconcile any transaction left `submitted` from a previous process so a restart cannot lose track of in-flight work
+- [x] After Circle returns a hash, wait for Arc RPC receipt — revert → `failed`, success → `confirmed`
+- [x] Recovery on startup: re-reconcile any transaction left `submitted` from a previous process via RPC receipt
 - [x] `GET /transactions/:id` returns live status; ensure no endpoint anywhere reports success without a `confirmed` row
-- [x] Verify a reverted relayed transaction is correctly surfaced as failed rather than silently treated as success — over-budget `placeBid` rejected by Circle / marked `failed`
-- [x] Verify a confirmed transaction is only marked confirmed after the subgraph shows it, not when the hash returned — 6 historical `submitted` rows confirmed via `EscrowEvent` lookup on v0.0.3
-- [x] **COMMIT 7** — transaction confirmation tracker working (pending → confirmed driven by subgraph events)
+- [x] Verify a reverted relayed transaction is correctly surfaced as failed rather than silently treated as success
+- [x] **COMMIT 7** — transaction confirmation tracker working (pending → confirmed driven by Arc RPC receipts)
 
 
 

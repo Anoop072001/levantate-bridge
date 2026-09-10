@@ -37,7 +37,7 @@ architecture diagram, and demo narration. When touching any of these areas, pres
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Circle** (Agent Stack / Wallets / Arc) | Agent holds a Developer-Controlled Wallet that funds escrow in USDC. A second Developer-Controlled Wallet acts as the relayer that submits worker transactions so workers never need gas. Escrow contract is deployed **on Arc**, USDC as native gas/settlement asset. `approveWork` → `releasePayment` is an autonomous on-chain USDC settlement triggered by the agent, paid to the worker's **self-custodied** address. |
 | **World ID** (Selfie Check)              | **Every bid carries its own fresh Selfie Check proof**, bound by `signal` to that task, round, and amount, verified server-side and spendable once. The bidder's identity is derived from the proof, never from a client-supplied value. A one-time registration binds the nullifier to a self-custodied payout address, blocking one person bidding under multiple identities. Framing is **economic-participation eligibility gating**, not identity verification. |
-| **The Graph** (Subgraph Studio)          | Subgraph indexes every contract state transition (`TaskPosted`, `BidPlaced`, `WorkerAssigned`, `WorkSubmitted`, `WorkRejected`, `PaymentReleased`, `TaskReclaimed`, `TaskCancelled`). The agent **queries the subgraph live** to set budgets and pick winning bids from real historical signals, including missed-deadline history. It is also the **confirmation authority** for whether a relayed transaction landed. Must be reasoning over live on-chain data, not a raw query printout.        |
+| **The Graph** (Subgraph Studio)          | Subgraph indexes every contract state transition (`TaskPosted`, `BidPlaced`, `WorkerAssigned`, `WorkSubmitted`, `WorkRejected`, `PaymentReleased`, `TaskReclaimed`, `TaskCancelled`). The agent **queries the subgraph live** to set budgets and pick winning bids from real historical signals, including missed-deadline history. Must be reasoning over live on-chain data, not a raw query printout. Relayed writes are confirmed via **Arc RPC receipts**, not subgraph indexing lag.        |
 
 
 Single settlement rail throughout: USDC on Arc via Circle. No cross-chain bridging or swapping
@@ -62,13 +62,14 @@ version from memory.
 - **One working path over broad partial coverage.** A fully working demo of Circle + Selfie Check +
 Graph in one clean flow beats several half-finished features.
 - **A transaction hash is not a success.** Never report a write as succeeded because a hash came
-back — a submitted transaction can still revert, be dropped, or be superseded. Every relayed
-transaction stays `pending` until its event appears in the subgraph, which is the single source of
-truth for "this happened on-chain." This applies to API responses, frontend state, agent logic, and
+back — a submitted transaction can still revert, be dropped, or be superseded. After Circle
+returns a hash, the backend waits for an **Arc RPC receipt**: `status = 0` (reverted) → `failed`
+immediately; `status = 1` (success) → `confirmed`. The subgraph is for agent budgeting and bid
+scoring, not write confirmation. This applies to API responses, frontend state, agent logic, and
 demo narration alike.
 - **Every state-transition function emits an event.** No silent transitions in the contract. If a
-transition emits nothing, the confirmation tracker cannot observe it and the subgraph's picture of
-task state is incomplete.
+transition emits nothing, the subgraph's picture of task state is incomplete and agent scoring
+loses that signal.
 - **Serialize relayer submissions.** One relayer wallet submits for many workers concurrently, and
 EVM nonces must be sequential with no gaps. All submissions from a given wallet go through a
 single-concurrency queue with an idempotency key. Never fire relayed transactions in parallel from
@@ -196,10 +197,8 @@ don't overclaim sybil resistance.
 - Flow: create the subgraph in Studio → `graph auth <DEPLOY_KEY>` → `graph deploy <SLUG>`.
 - Deploying to Studio is not publishing. Studio deployment plus the dev query URL is sufficient here.
 - Indexing lag is real and independent of chain finality. Arc finalizes in one sub-second block, but
-the subgraph still needs to index it. The confirmation tracker must therefore treat "event not found
-yet" as *pending*, not *failed*, and only escalate after a timeout. To distinguish a genuinely
-reverted transaction from one that simply is not indexed yet, fall back to the RPC receipt for
-diagnosis — but keep the subgraph as the authority for declaring success.
+the subgraph still needs to index it. **Relayed transaction confirmation uses Arc RPC receipts**;
+the subgraph supplies historical signals for the agent, not write success/failure.
 - Entities must store `transactionHash` so the backend can correlate an indexed event back to the
 submission that produced it.
 
@@ -223,7 +222,7 @@ Planned commit points (see `PLAN.md` for which tasks roll up into each):
 4. Relayer submission queue working (serialized nonces, idempotent retries)
 5. Backend payment/escrow release logic working
 6. Subgraph deployed and returning indexed data
-7. Transaction confirmation tracker working (pending → confirmed driven by subgraph events)
+7. Transaction confirmation tracker working (pending → confirmed driven by Arc RPC receipts)
 8. Agent decision logic (subgraph-informed bid selection, missed deadlines penalized) working
 9. Frontend task browse/bid/submit flow working
 10. Missed-deadline reclaim path verified end-to-end

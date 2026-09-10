@@ -52,11 +52,11 @@ Without the second deadline, a worker who wins a bid and then disappears leaves 
 
 A missed deadline is a first-class reputation signal, not just a state reset — it is emitted on-chain and indexed, so the agent's future bid scoring can weigh "this worker won a task and never delivered" alongside price and completion rate.
 
-### Transaction confirmation is subgraph-driven
+### Transaction confirmation is RPC receipt-driven
 
 Because the backend relays transactions on behalf of workers, **a returned transaction hash is not proof that anything happened on-chain.** A hash means "submitted," and a submitted transaction can still revert, get dropped, or be superseded.
 
-The single source of truth for "this happened on-chain" is the **subgraph's indexed events**. Every relayed transaction is tracked as `pending` from submission and only becomes `confirmed` when its corresponding event appears in the subgraph. Nothing in the API, the frontend, or the demo may report success on receipt of a hash alone.
+After Circle returns a hash, the backend waits for an **Arc RPC receipt**: `status = 0` (reverted) → `failed` immediately; `status = 1` (success) → `confirmed`. Nothing in the API, the frontend, or the demo may report success on receipt of a hash alone. The subgraph indexes the same events for agent budgeting and bid scoring, but **not** for write confirmation.
 
 This has two structural consequences:
 
@@ -81,7 +81,7 @@ This is the explicit mapping to call out in the README, diagram labels, and demo
 - **The Graph (Subgraph Studio)**
   - A subgraph indexes every state transition the escrow contract emits: `TaskPosted`, `BidPlaced`, `WorkerAssigned`, `WorkSubmitted`, `WorkRejected`, `PaymentReleased`, `TaskReclaimed`, `TaskCancelled`.
   - The **agent queries this subgraph live** before setting its budget or picking a winning bid — e.g. "what did similar tasks pay historically," "what's this worker's completion rate," "has this worker ever missed a submission deadline."
-  - The subgraph is also the **confirmation layer**: it is the authority on whether a relayed transaction actually landed, so the backend's pending/confirmed state machine reads from it rather than trusting transaction hashes.
+  - Relayed writes are confirmed via **Arc RPC receipts**; the subgraph supplies historical signals the agent reasons over when setting budgets and picking winners.
   - This is the "AI use case with The Graph" requirement: real reasoning over live on-chain data, not a raw query printout.
 
 
@@ -121,10 +121,10 @@ This is the explicit mapping to call out in the README, diagram labels, and demo
 
 ## Components to build
 
-1. **Escrow smart contract** (Solidity, Arc testnet) — states: Open → Bidding → Assigned → Submitted → Paid, plus Cancelled as a terminal state. Functions: `postTask`, `placeBid`, `selectWinner`, `submitWork`, `approveWork` (triggers USDC release), `rejectWork`, `reclaimTask` (Assigned → Open after a missed `submissionDeadline`), `cancelTask` (refund when a bidding round closes with no bids). Every one of these emits an event, since the subgraph is the confirmation authority.
+1. **Escrow smart contract** (Solidity, Arc testnet) — states: Open → Bidding → Assigned → Submitted → Paid, plus Cancelled as a terminal state. Functions: `postTask`, `placeBid`, `selectWinner`, `submitWork`, `approveWork` (triggers USDC release), `rejectWork`, `reclaimTask` (Assigned → Open after a missed `submissionDeadline`), `cancelTask` (refund when a bidding round closes with no bids). Every one of these emits an event so the subgraph can index task history for agent scoring.
 2. **Circle integration** — Developer-Controlled Wallets via Agent Stack: one wallet for the requesting agent, one for the relayer. No custodial worker wallets.
 3. **World ID Selfie Check integration** — IDKit in sandbox mode; server-side proof verification; nullifier hash stored and bound to a self-custodied payout address to block duplicate-identity bidding.
-4. **Backend / marketplace API** — orchestrates the full state machine, talks to the contract (viem) and Circle SDK, and persists state in **hosted Supabase Postgres**. Includes the **relayed-transaction tracker**: a serialized, idempotent submission queue per wallet plus a pending→confirmed reconciler driven by subgraph events.
+4. **Backend / marketplace API** — orchestrates the full state machine, talks to the contract (viem) and Circle SDK, and persists state in **hosted Supabase Postgres**. Includes the **relayed-transaction tracker**: a serialized, idempotent submission queue per wallet plus a pending→confirmed reconciler driven by Arc RPC receipts.
 5. **Subgraph** (Subgraph Studio) — indexes every contract event listed in the sponsor mapping above. Schema entities: `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline`. `Worker` carries the derived reputation fields the agent scores on, including missed-deadline counts.
 6. **Agent logic** — sets max budget and evaluates bids using live subgraph queries (historical price for similar tasks, a worker's completion rate, a worker's missed-deadline history) rather than a hardcoded rule.
 7. **Worker-facing frontend** — browse open tasks, complete Selfie Check, bid, submit proof of completed work.
@@ -164,7 +164,7 @@ Each folder should be independently runnable/buildable (its own package.json whe
 2. Integrate World ID Selfie Check sandbox into the bidding flow; verify proofs server-side; store nullifiers and block duplicate-identity bids.
 3. Build the full backend marketplace API (complete state machine) wired to the contract and Circle SDK, including the serialized relayer queue.
 4. Write and deploy the subgraph against the testnet contract; confirm every event type is indexed correctly, including missed-deadline reclaims.
-5. Wire the backend's pending→confirmed transaction reconciler to the subgraph, so no relayed transaction is reported successful on hash alone.
+5. Wire the backend's pending→confirmed transaction reconciler to Arc RPC receipts, so no relayed transaction is reported successful on hash alone.
 6. Build the agent logic that queries the subgraph to set budgets and select winning bids based on real historical data, penalizing workers with missed deadlines.
 7. Build the worker-facing frontend: browse tasks, Selfie Check, bid, submit proof, with pending-vs-confirmed transaction states surfaced.
 8. Run the full flow end-to-end, including the missed-deadline reclaim path; fix breakage.
@@ -179,7 +179,7 @@ Each folder should be independently runnable/buildable (its own package.json whe
 - If a piece of code stops being used after a refactor (a function, a route, a contract method, an unused import), delete it — do not leave dead code in the repo.
 - Favor one working end-to-end path over broad partial coverage. If time runs short, a fully working demo of Circle + Selfie Check + Graph subgraph in one clean flow beats several half-finished features.
 - Every external integration (Circle, World ID, The Graph) must hit real testnet/sandbox endpoints — no mocked or hardcoded fake responses standing in for actual calls.
-- Never treat a returned transaction hash as proof of success, and never fire relayed transactions in parallel from a single wallet. See "Transaction confirmation is subgraph-driven" above; the operational rules are in `AGENTS.md`.
+- Never treat a returned transaction hash as proof of success, and never fire relayed transactions in parallel from a single wallet. See "Transaction confirmation is RPC receipt-driven" above; the operational rules are in `AGENTS.md`.
 - Every sponsor integration must be visibly demonstrable and labeled as such in the README/diagram/demo video — see the "Where each sponsor product is used" section above.
 - Before writing any code, verify the current/latest stable versions of every major dependency (Solidity compiler version, Circle SDK package version, World ID IDKit/MiniKit version, The Graph CLI/graph-node tooling, Next.js/React versions, viem/ethers versions) via web search — do not default to versions from training data, which may be outdated. Pin these verified versions in each package's config (package.json, foundry/hardhat config, etc.).
 
@@ -195,7 +195,7 @@ Commit after each meaningfully complete feature — not one giant commit at the 
 - Relayer submission queue working (serialized nonces, idempotent retries)
 - Backend payment/escrow release logic working
 - Subgraph deployed and returning indexed data
-- Transaction confirmation tracker working (pending → confirmed driven by subgraph events)
+- Transaction confirmation tracker working (pending → confirmed driven by Arc RPC receipts)
 - Agent decision logic (subgraph-informed bid selection) working
 - Frontend task browse/bid/submit flow working
 - Missed-deadline reclaim path verified end-to-end

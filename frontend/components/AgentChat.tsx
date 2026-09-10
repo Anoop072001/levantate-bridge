@@ -1,19 +1,13 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
-import {
-  ArrowUp,
-  Check,
-  Copy,
-  Download,
-  Loader2,
-  MessageSquarePlus,
-  Trash2,
-  Wrench,
-  X,
-} from "lucide-react";
+import { Loader2, ArrowUp, Copy, Download, MessageSquarePlus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PendingTransaction } from "@/components/PendingTransaction";
+import {
+  ToolCallsSection,
+  type ToolCallEntry,
+} from "@/components/ui/tool-calls-section";
+import { toolCategoryFor } from "@/components/ui/tool-calls-section-utils/tool-icons";
 import {
   createAgentChat,
   deleteAgentChat,
@@ -23,6 +17,7 @@ import {
   messagesToTurns,
   sendChatMessage,
   type AgentChatSummary,
+  type AgentFundingHint,
   type AgentStep,
   type StoredChatTurn,
 } from "@/lib/agent-chat";
@@ -34,6 +29,20 @@ const SUGGESTIONS = [
   "What was the most common complaint in task 8's proof?",
 ];
 
+function needsFundingHint(funding: AgentFundingHint): boolean {
+  return funding.required_usdc > 0 && funding.balance_usdc < funding.required_usdc;
+}
+
+function stepsToToolCalls(steps: AgentStep[]): ToolCallEntry[] {
+  return steps.map((step) => ({
+    tool_name: step.tool,
+    tool_category: toolCategoryFor(step.tool),
+    message: step.summary,
+    inputs: Object.keys(step.args).length > 0 ? step.args : undefined,
+    show_category: true,
+  }));
+}
+
 export function AgentChat() {
   const [chats, setChats] = useState<AgentChatSummary[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -44,7 +53,7 @@ export function AgentChat() {
   const [error, setError] = useState<string | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [chatStatus, setChatStatus] = useState<"active" | "idle">("active");
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const loadChat = useCallback(async (chatId: string) => {
     const { chat, messages } = await fetchAgentChat(chatId);
@@ -88,7 +97,9 @@ export function AgentChat() {
   }, [loadChat]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [turns, busy]);
 
   async function handleNewChat() {
@@ -141,27 +152,38 @@ export function AgentChat() {
     const trimmed = text.trim();
     if (!trimmed || busy || !activeChatId) return;
 
+    const optimisticId = `optimistic-${Date.now()}`;
+    setTurns((prev) => [
+      ...prev,
+      { id: optimisticId, message: { role: "user", content: trimmed } },
+    ]);
+    setInput("");
     setBusy(true);
     setError(null);
+
     try {
       const result = await sendChatMessage(activeChatId, trimmed);
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: result.userMessage.id,
-          message: { role: "user", content: trimmed },
-        },
-        {
-          id: result.assistantMessage.id,
-          message: { role: "assistant", content: result.reply },
-          steps: result.steps,
-        },
-      ]);
-      setInput("");
+      setTurns((prev) => {
+        const withoutOptimistic = prev.filter((t) => t.id !== optimisticId);
+        return [
+          ...withoutOptimistic,
+          {
+            id: result.userMessage.id,
+            message: { role: "user", content: trimmed },
+          },
+          {
+            id: result.assistantMessage.id,
+            message: { role: "assistant", content: result.reply },
+            steps: result.steps,
+          },
+        ];
+      });
       setChatStatus(result.chatStatus);
       const refreshed = await fetchAgentChats();
       setChats(refreshed);
     } catch (err) {
+      setTurns((prev) => prev.filter((t) => t.id !== optimisticId));
+      setInput(trimmed);
       setError(err instanceof Error ? err.message : "Agent chat failed");
     } finally {
       setBusy(false);
@@ -170,15 +192,15 @@ export function AgentChat() {
 
   if (!hydrated) {
     return (
-      <div className="flex min-h-[calc(100vh-73px)] items-center justify-center">
+      <div className="flex h-[calc(100vh-73px)] items-center justify-center">
         <p className="text-sm text-muted-foreground">Loading chats…</p>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-73px)]">
-      <aside className="flex h-[calc(100vh-73px)] w-64 shrink-0 flex-col overflow-hidden border-r border-border bg-muted/30">
+    <div className="flex h-[calc(100vh-73px)] overflow-hidden">
+      <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-muted/30">
         <div className="shrink-0 p-3">
           <button
             type="button"
@@ -190,7 +212,7 @@ export function AgentChat() {
             New chat
           </button>
         </div>
-        <nav className="min-h-0 flex-1 overflow-hidden px-2 pb-4">
+        <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
           {chats.map((chat) => (
             <div
               key={chat.id}
@@ -225,84 +247,78 @@ export function AgentChat() {
         </nav>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="mx-auto w-full max-w-3xl flex-1 px-4 py-10">
-          {turns.length === 0 ? (
-            <div className="space-y-6">
-              <div className="space-y-3">
-                <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">Agent console</h1>
-                <p className="max-w-xl text-base leading-relaxed text-muted-foreground">
-                  Multiple chats are saved in the database. External AI clients can connect via MCP
-                  (run <code className="text-sm">npm run mcp --prefix backend</code>).
-                </p>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-3xl px-4 py-10">
+            {turns.length === 0 ? (
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">Agent console</h1>
+                  <p className="max-w-xl text-base leading-relaxed text-muted-foreground">
+                    Multiple chats are saved in the database. External AI clients can connect via MCP
+                    (run <code className="text-sm">npm run mcp --prefix backend</code>).
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => void send(s)}
+                      disabled={busy}
+                      className="cursor-pointer rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-col gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => void send(s)}
-                    className="cursor-pointer rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted"
-                  >
-                    {s}
-                  </button>
+            ) : (
+              <div className="space-y-6">
+                <h1 className="text-2xl font-bold tracking-tight">
+                  {chats.find((c) => c.id === activeChatId)?.title ?? "Agent console"}
+                </h1>
+                {turns.map((turn) => (
+                  <div key={turn.id} className="space-y-3">
+                    {turn.message.role === "user" ? (
+                      <div className="flex justify-end">
+                        <p className="max-w-[85%] rounded-3xl rounded-br-lg bg-zinc-900 px-5 py-3 text-sm leading-relaxed text-white">
+                          {turn.message.content}
+                        </p>
+                      </div>
+                    ) : (
+                      <AssistantTurn turn={turn} />
+                    )}
+                  </div>
                 ))}
               </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <h1 className="text-2xl font-bold tracking-tight">
-                {chats.find((c) => c.id === activeChatId)?.title ?? "Agent console"}
-              </h1>
-              {turns.map((turn) => (
-                <div key={turn.id} className="space-y-3">
-                  {turn.message.role === "user" ? (
-                    <div className="flex justify-end">
-                      <p className="max-w-[85%] rounded-3xl rounded-br-lg bg-zinc-900 px-5 py-3 text-sm leading-relaxed text-white">
-                        {turn.message.content}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {turn.steps?.map((step, j) => (
-                        <StepCard key={`${turn.id}-${j}`} step={step} />
-                      ))}
-                      <p className="max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                        {turn.message.content}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+            )}
 
-          {busy && (
-            <p className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Working — on-chain calls take a few seconds each.
-            </p>
-          )}
+            {busy && (
+              <p className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Working — on-chain calls take a few seconds each.
+              </p>
+            )}
 
-          {chatStatus === "idle" && !busy && (
-            <p className="mt-6 rounded-2xl border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
-              Agent is idle — task posted. Workers bid on the task board; send a message anytime for
-              a status update or to assign a winner, review proof, or release payment.
-            </p>
-          )}
+            {chatStatus === "idle" && !busy && (
+              <p className="mt-6 rounded-2xl border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+                Agent is idle — task posted. Workers bid on the task board; send a message anytime for
+                a status update or to assign a winner, review proof, or release payment.
+              </p>
+            )}
 
-          {error && <p className="mt-6 text-sm text-red-700">{error}</p>}
+            {error && <p className="mt-6 text-sm text-red-700">{error}</p>}
 
-          {available === false && (
-            <p className="mt-6 text-sm text-red-700">
-              The agent needs <code>OPENAI_API_KEY</code> in <code>.env.local</code> to run.
-            </p>
-          )}
-
-          <div ref={endRef} />
+            {available === false && (
+              <p className="mt-6 text-sm text-red-700">
+                The agent needs <code>OPENAI_API_KEY</code> in <code>.env.local</code> to run.
+              </p>
+            )}
+          </div>
         </div>
 
-        <div className="sticky bottom-0 border-t border-border bg-background/85 backdrop-blur-md">
+        <div className="shrink-0 border-t border-border bg-background/85 backdrop-blur-md">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -338,7 +354,53 @@ export function AgentChat() {
   );
 }
 
-function FundingCard({ funding }: { funding: NonNullable<AgentStep["funding"]> }) {
+function AssistantTurn({ turn }: { turn: StoredChatTurn }) {
+  const steps = turn.steps ?? [];
+
+  return (
+    <div className="space-y-3">
+      {steps.length > 0 && (
+        <>
+          <ToolCallsSection toolCalls={stepsToToolCalls(steps)} defaultExpanded />
+          <StepExtras steps={steps} />
+        </>
+      )}
+      <p className="max-w-[90%] whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+        {turn.message.content}
+      </p>
+    </div>
+  );
+}
+
+function StepExtras({ steps }: { steps: AgentStep[] }) {
+  return (
+    <>
+      {steps.map((step, i) => (
+        <div key={`${step.tool}-${i}`} className="space-y-2">
+          {step.funding && needsFundingHint(step.funding) && (
+            <FundingCard funding={step.funding} />
+          )}
+          {step.downloads?.map((file) => (
+            <a
+              key={file.url}
+              href={file.url}
+              download
+              className={`${insetButtonDarkClass} max-w-md text-sm`}
+            >
+              <Download className="h-4 w-4" />
+              Download {file.label}
+            </a>
+          ))}
+          {step.transactions.map((tx) => (
+            <PendingTransaction key={tx.transactionId} initial={tx} className="max-w-md" />
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function FundingCard({ funding }: { funding: AgentFundingHint }) {
   const [copied, setCopied] = useState(false);
 
   async function copyAddress() {
@@ -355,10 +417,8 @@ function FundingCard({ funding }: { funding: NonNullable<AgentStep["funding"]> }
     <div className="max-w-md space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
       <p className="font-medium">Fund the agent wallet on Arc testnet</p>
       <p className="text-xs leading-relaxed">
-        Balance: {funding.balance_usdc.toFixed(2)} USDC
-        {funding.required_usdc > 0 && (
-          <> · Need: {funding.required_usdc.toFixed(2)} USDC</>
-        )}
+        Balance: {funding.balance_usdc.toFixed(2)} USDC · Need:{" "}
+        {funding.required_usdc.toFixed(2)} USDC
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <code className="break-all text-xs">{funding.agent_address}</code>
@@ -380,46 +440,5 @@ function FundingCard({ funding }: { funding: NonNullable<AgentStep["funding"]> }
         Open Circle faucet (select Arc Testnet)
       </a>
     </div>
-  );
-}
-
-function StepCard({ step }: { step: AgentStep }) {
-  return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25, ease: "easeOut" }}
-        className="space-y-2"
-      >
-        <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1.5 text-xs text-muted-foreground">
-          {step.ok ? (
-            <Check className="h-3 w-3 text-emerald-700" />
-          ) : (
-            <X className="h-3 w-3 text-red-700" />
-          )}
-          <Wrench className="h-3 w-3" />
-          <code className={cn("font-medium", step.ok ? "text-foreground" : "text-red-700")}>
-            {step.tool}
-          </code>
-          <span>{step.summary}</span>
-        </div>
-        {step.funding && <FundingCard funding={step.funding} />}
-        {step.downloads?.map((file) => (
-          <a
-            key={file.url}
-            href={file.url}
-            download
-            className={`${insetButtonDarkClass} max-w-md text-sm`}
-          >
-            <Download className="h-4 w-4" />
-            Download {file.label}
-          </a>
-        ))}
-        {step.transactions.map((tx) => (
-          <PendingTransaction key={tx.transactionId} initial={tx} className="max-w-md" />
-        ))}
-      </motion.div>
-    </AnimatePresence>
   );
 }

@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { transactionResponse } from "../relayer/submit.js";
 import { fundingHintFromPayload } from "../chain/agent-wallet.js";
 import {
   AGENT_OPENAI_TOOLS,
@@ -38,9 +37,10 @@ an Assigned task whose submission deadline passed can be reclaimed back to Open 
 Rules you must follow:
 - All amounts in tool arguments and results are plain USDC (for example 1.25), already converted
   from the contract's 6-decimal representation.
-- A transaction hash is NOT success. Every write returns a relayed transaction in submitted
-  status. Tell the operator to open the Arcscan link or refresh the page to see updated task
-  state — there is no automatic confirmation polling.
+- A transaction hash alone is NOT success. The backend waits for an Arc RPC receipt after
+  Circle submits: receipt success → confirmed, revert → failed. Report the transaction status
+  from tool results (confirmed / failed / still submitted). The subgraph is for agent budgeting
+  and bid scoring only — not write confirmation.
 - Never say a task was created, cancelled, or updated unless you called the matching tool in this
   turn and the tool result has ok: true (and task_id when posting). If you did not call the tool
   or ok is false, report that honestly.
@@ -147,7 +147,7 @@ export async function runChatTurn(
         args,
         ok: outcome.ok,
         summary: outcome.summary,
-        transactions: outcome.transactions.map(transactionResponse),
+        transactions: outcome.transactions,
         ...(downloads.length > 0 ? { downloads } : {}),
         ...(funding ? { funding } : {}),
       });
@@ -158,7 +158,7 @@ export async function runChatTurn(
         content: JSON.stringify({
           ok: outcome.ok,
           summary: outcome.summary,
-          ...outcome.payload,
+          payload: outcome.payload,
         }),
       });
     }

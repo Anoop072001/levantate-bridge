@@ -1,24 +1,64 @@
 "use client";
 
 import { ExternalLink } from "lucide-react";
-import { ARC_EXPLORER } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { ARC_EXPLORER, fetchRelayedTransaction } from "@/lib/api";
 import type { RelayedTransaction } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 export function PendingTransaction({
   initial,
   className,
+  onSettled,
 }: {
   initial: RelayedTransaction;
   className?: string;
+  onSettled?: (tx: RelayedTransaction) => void;
 }) {
-  const tx = initial;
+  const [tx, setTx] = useState(initial);
+
+  useEffect(() => {
+    setTx(initial);
+  }, [initial]);
+
+  useEffect(() => {
+    if (tx.status !== "queued" && tx.status !== "submitted") return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const next = await fetchRelayedTransaction(tx.transactionId);
+        if (cancelled) return;
+        setTx(next);
+        if (next.status === "confirmed" || next.status === "failed") {
+          onSettled?.(next);
+        }
+      } catch {
+        /* keep showing last known state */
+      }
+    };
+
+    void poll();
+    const id = setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [tx.transactionId, tx.status, onSettled]);
 
   return (
     <div className={cn("rounded-2xl border border-border bg-card p-4 text-sm", className)}>
       <p>
         <strong className="capitalize">{tx.kind.replace(/_/g, " ")}</strong> —{" "}
-        <span className="text-muted-foreground">{tx.status}</span>
+        <span
+          className={cn(
+            tx.status === "confirmed" && "text-emerald-700",
+            tx.status === "failed" && "text-red-700",
+            tx.status !== "confirmed" && tx.status !== "failed" && "text-muted-foreground",
+          )}
+        >
+          {tx.status}
+        </span>
       </p>
       {tx.txHash && (
         <p className="mt-2">
@@ -34,14 +74,18 @@ export function PendingTransaction({
         </p>
       )}
       {tx.error && <p className="mt-2 text-red-700">{tx.error}</p>}
-      {tx.status === "submitted" && (
+      {(tx.status === "queued" || tx.status === "submitted") && (
         <p className="mt-2 text-muted-foreground">
-          Transaction submitted. Check Arcscan above, then refresh this page to see updated task
-          state — like a block explorer.
+          Waiting for Arc RPC receipt…
         </p>
       )}
+      {tx.status === "confirmed" && (
+        <p className="mt-2 text-emerald-700">Confirmed on-chain.</p>
+      )}
       {tx.status === "failed" && (
-        <p className="mt-2 text-red-700">Submission failed before reaching the chain.</p>
+        <p className="mt-2 text-red-700">
+          Transaction failed or reverted. Check Arcscan for details.
+        </p>
       )}
     </div>
   );

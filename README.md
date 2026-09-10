@@ -74,7 +74,7 @@ npm install
 npm run dev
 ```
 
-Listens on `http://localhost:3001`. Starts the agent loop (every 30s) and the subgraph confirmation reconciler.
+Listens on `http://localhost:3001`. Starts the agent loop (every 30s) and reconciles any stuck relay rows via Arc RPC receipts on startup.
 
 Health check: `GET http://localhost:3001/health`
 
@@ -122,7 +122,7 @@ After publishing to the Graph Network, set `GRAPH_QUERY_API_KEY` (from [Subgraph
 
 6. **Agent evaluates proof** — LLM approves or rejects; on approve, USDC moves to the worker's own wallet and unspent budget refunds to the agent.
 
-Poll any write via `GET /api/transactions/:id` — **confirmed** only when the subgraph indexes the expected event.
+Poll any write via `GET /api/transactions/:id` — **confirmed** when Arc RPC returns a successful receipt (revert → **failed**).
 
 ### Other paths
 
@@ -140,7 +140,7 @@ explicit API call or an instruction to the agent at `/agent`.
 `/agent` is a chat front end over the same escrow operations (`POST /api/agent/chat`, needs
 `OPENAI_API_KEY`). It can list and inspect tasks, score bids against live subgraph history, post
 tasks, select winners, approve or reject work, reclaim, and cancel. It reports every write as
-*submitted* until the subgraph indexes the event, it asks before moving USDC, and it cannot bid for
+*submitted* until Arc RPC confirms the receipt (revert → *failed*), it asks before moving USDC, and it cannot bid for
 a worker or reach worker funds — there is no custodial worker wallet to reach.
 
 ## Useful API routes
@@ -207,7 +207,7 @@ With one sandbox World ID identity:
 - Reject path: inadequate proof rejected, resubmit, paid
 - Reclaim path: missed deadline indexed as `MissedDeadline`; barred worker cannot re-bid same task
 - Duplicate same-amount bid blocked; duplicate nullifier blocked at API
-- All relayed transactions confirmed via subgraph, not hash alone
+- All relayed transactions confirmed via Arc RPC receipt, not hash alone
 
 Those runs predate three changes that still need a re-verification pass: self-custodied worker wallets, Supabase persistence, and per-bid Selfie Check. See `PLAN.md`. A second World ID identity for competing bids and round-2 reclaim payout is also deferred.
 

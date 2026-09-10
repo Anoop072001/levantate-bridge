@@ -185,6 +185,15 @@ export async function fetchTaskProof(
   return data;
 }
 
+export async function fetchRelayedTransaction(transactionId: string): Promise<RelayedTransaction> {
+  const res = await fetch(`${backendUrl}/api/transactions/${transactionId}`, {
+    cache: "no-store",
+  });
+  const data = await parseJson<RelayedTransaction>(res);
+  if (!res.ok) throw new Error(data.error ?? "Transaction not found");
+  return data;
+}
+
 export function usdcMicroToDisplay(micro: string | number): string {
   const n = typeof micro === "string" ? Number(micro) : micro;
   return (n / 1_000_000).toFixed(2);

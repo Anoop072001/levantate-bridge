@@ -7,6 +7,7 @@ import {
   type RelayedTransaction,
 } from "../store.js";
 import { invalidateOnChainTaskCache } from "../chain/task-state.js";
+import { waitForArcReceipt } from "../chain/wait-receipt.js";
 import { getWalletQueue } from "./queue.js";
 
 export interface ContractCallInput {
@@ -81,10 +82,35 @@ async function submitContractCall(input: ContractCallInput): Promise<RelayedTran
 
   try {
     const txHash = await waitForCircleTx(circleTxId);
-    if (input.taskId !== undefined) {
-      invalidateOnChainTaskCache(input.taskId);
+    if (!txHash) {
+      return updateRelayedTransaction(pending.id, {
+        status: "failed",
+        error: "Circle completed without transaction hash",
+      });
     }
-    return updateRelayedTransaction(pending.id, { txHash, status: "submitted" });
+    await updateRelayedTransaction(pending.id, { txHash, status: "submitted" });
+
+    try {
+      const outcome = await waitForArcReceipt(txHash);
+      if (input.taskId !== undefined) {
+        invalidateOnChainTaskCache(input.taskId);
+      }
+      if (outcome === "failed") {
+        return updateRelayedTransaction(pending.id, {
+          txHash,
+          status: "failed",
+          error: "Transaction reverted on-chain",
+        });
+      }
+      return updateRelayedTransaction(pending.id, { txHash, status: "confirmed" });
+    } catch (receiptErr) {
+      console.warn(
+        `[relayer] receipt wait incomplete for ${txHash}: ${
+          receiptErr instanceof Error ? receiptErr.message : receiptErr
+        }`,
+      );
+      return updateRelayedTransaction(pending.id, { txHash, status: "submitted" });
+    }
   } catch (err) {
     return updateRelayedTransaction(pending.id, {
       status: "failed",
@@ -112,4 +138,18 @@ export function transactionResponse(tx: RelayedTransaction) {
 
 export function pendingHandle(tx: RelayedTransaction) {
   return transactionResponse(tx);
+}
+
+/** Human-readable chain outcome after Circle submit + Arc RPC receipt wait. */
+export function relayChainStatus(tx: RelayedTransaction): string {
+  switch (tx.status) {
+    case "confirmed":
+      return "confirmed on-chain (RPC receipt success)";
+    case "failed":
+      return `failed (${tx.error ?? "reverted or submission error"})`;
+    case "submitted":
+      return "submitted — awaiting Arc RPC receipt";
+    default:
+      return tx.status;
+  }
 }

@@ -85,7 +85,13 @@ export async function checkAgentFunding(requiredMicro: bigint): Promise<AgentFun
 
 export function fundingHintFromPayload(payload: unknown): AgentFundingHint | undefined {
   if (!payload || typeof payload !== "object") return undefined;
-  const funding = (payload as { funding?: AgentFundingHint }).funding;
+  const p = payload as { funding?: AgentFundingHint; sufficient?: boolean };
+  const funding = p.funding;
   if (!funding?.agent_address) return undefined;
-  return funding;
+  if (p.sufficient === true) return undefined;
+  if (p.sufficient === false) return funding;
+  if (funding.required_usdc > 0 && funding.balance_usdc < funding.required_usdc) {
+    return funding;
+  }
+  return undefined;
 }
