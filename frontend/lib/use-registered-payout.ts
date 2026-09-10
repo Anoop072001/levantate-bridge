@@ -6,24 +6,13 @@ import { getRegisteredNullifier, setRegisteredNullifier } from "./registered-nul
 import { getWorkerSession, setWorkerSession } from "./worker-session";
 import type { RegisteredPayout } from "./payout-session";
 
-function restoreWorldIdInSession(registered: RegisteredPayout | null): void {
-  if (!registered) return;
-  const session = getWorkerSession();
-  if (
-    session?.walletAddress &&
-    session.walletAddress.toLowerCase() === registered.registeredAddress.toLowerCase() &&
-    !session.nullifierHash
-  ) {
-    setWorkerSession({ ...session, nullifierHash: registered.nullifierHash });
-  }
-}
-
 export function useRegisteredPayout(nullifierHash?: string, walletAddress?: string) {
   const [registeredPayout, setRegisteredPayout] = useState<RegisteredPayout | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const lookupHash = nullifierHash ?? getRegisteredNullifier() ?? undefined;
+  const lookupHash = nullifierHash ?? getRegisteredNullifier() ?? "";
+  const lookupWallet = walletAddress ?? "";
 
   useEffect(() => {
     let cancelled = false;
@@ -39,19 +28,17 @@ export function useRegisteredPayout(nullifierHash?: string, walletAddress?: stri
           if (byNullifier?.nullifierHash) {
             setRegisteredNullifier(byNullifier.nullifierHash);
           }
-          restoreWorldIdInSession(byNullifier);
           return;
         }
 
-        if (walletAddress) {
-          const byWallet = await fetchRegisteredPayout({ walletAddress });
+        if (lookupWallet) {
+          const byWallet = await fetchRegisteredPayout({ walletAddress: lookupWallet });
           if (cancelled) return;
           setRegisteredPayout(byWallet);
           setError(null);
           if (byWallet?.nullifierHash) {
             setRegisteredNullifier(byWallet.nullifierHash);
           }
-          restoreWorldIdInSession(byWallet);
           return;
         }
 
@@ -70,7 +57,25 @@ export function useRegisteredPayout(nullifierHash?: string, walletAddress?: stri
     return () => {
       cancelled = true;
     };
-  }, [lookupHash, walletAddress]);
+  }, [lookupHash, lookupWallet]);
 
-  return { registeredPayout, loading, error, lookupHash };
+  // Restore World ID into session after fetch — separate effect avoids nested setState during load.
+  useEffect(() => {
+    if (!registeredPayout) return;
+    const session = getWorkerSession();
+    if (
+      session?.walletAddress &&
+      session.walletAddress.toLowerCase() === registeredPayout.registeredAddress.toLowerCase() &&
+      !session.nullifierHash
+    ) {
+      setWorkerSession({ ...session, nullifierHash: registeredPayout.nullifierHash });
+    }
+  }, [registeredPayout]);
+
+  return {
+    registeredPayout,
+    loading,
+    error,
+    lookupHash: lookupHash || undefined,
+  };
 }

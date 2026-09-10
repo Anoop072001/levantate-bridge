@@ -20,11 +20,17 @@ import { createArcHttpTransport } from "./arc-rpc";
 const projectId =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "00000000000000000000000000000000";
 
+/** WalletConnect / Rainbow fetch Reown cloud config on init — 403 on localhost without allowlist. */
+const recommendedWallets =
+  process.env.NODE_ENV === "development"
+    ? [metaMaskWallet, injectedWallet]
+    : [metaMaskWallet, rainbowWallet, injectedWallet, walletConnectWallet];
+
 const connectors = connectorsForWallets(
   [
     {
       groupName: "Recommended",
-      wallets: [metaMaskWallet, rainbowWallet, injectedWallet, walletConnectWallet],
+      wallets: recommendedWallets,
     },
   ],
   {
