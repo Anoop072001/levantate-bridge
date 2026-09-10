@@ -1,6 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
-
 export interface ProofVerdict {
   approved: boolean;
   reason: string;
@@ -44,6 +41,7 @@ async function evaluateWithAnthropic(
   proofContent: string,
   submissionKind: "text" | "file",
 ): Promise<ProofVerdict> {
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   const response = await client.messages.create({
     model: "claude-sonnet-4-20250514",
@@ -59,6 +57,7 @@ async function evaluateWithOpenAI(
   proofContent: string,
   submissionKind: "text" | "file",
 ): Promise<ProofVerdict> {
+  const { default: OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
   const response = await client.chat.completions.create({
     model: "gpt-4o",

@@ -1,12 +1,6 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { fundingHintFromPayload } from "../chain/agent-wallet.js";
-import {
-  AGENT_OPENAI_TOOLS,
-  downloadsFromToolPayload,
-  runAgentTool,
-  type AgentStep,
-  type AgentToolOutcome,
-} from "./tools.js";
+import type { AgentStep, AgentToolOutcome } from "./tools.js";
 
 export type { AgentStep } from "./tools.js";
 
@@ -93,6 +87,9 @@ export async function runChatTurn(
   if (!isChatAvailable()) {
     throw new Error("Agent chat requires OPENAI_API_KEY in .env.local");
   }
+
+  const [{ default: OpenAI }, { AGENT_OPENAI_TOOLS, downloadsFromToolPayload, runAgentTool }] =
+    await Promise.all([import("openai"), import("./tools.js")]);
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
   const system = options?.resumingFromIdle

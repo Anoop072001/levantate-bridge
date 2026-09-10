@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { proofHash, parseProofContent } from "../proof/payload.js";
-import { describeProofForApi } from "../proof/evaluate-record.js";
+import { describeProofForApi } from "../proof/describe.js";
 import { resolveProofFileDownload } from "../proof/serve-download.js";
 import { handleSubmitWork } from "../proof/submit-work.js";
 import { readUsdcBalance } from "../chain/usdc-balance.js";

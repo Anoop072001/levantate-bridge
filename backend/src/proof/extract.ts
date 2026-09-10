@@ -1,7 +1,3 @@
-import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
-import * as XLSX from "@e965/xlsx";
-
 const MAX_EXTRACT_CHARS = 24_000;
 
 function clip(text: string): string {
@@ -18,6 +14,7 @@ export async function extractTextFromFile(
   const lower = fileName.toLowerCase();
 
   if (mimeType === "application/pdf" || lower.endsWith(".pdf")) {
+    const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: bytes });
     const parsed = await parser.getText();
     return clip(parsed.text || "");
@@ -28,7 +25,8 @@ export async function extractTextFromFile(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     lower.endsWith(".docx")
   ) {
-    const result = await mammoth.extractRawText({ buffer: bytes });
+    const mammoth = await import("mammoth");
+    const result = await mammoth.default.extractRawText({ buffer: bytes });
     return clip(result.value || "");
   }
 
@@ -38,6 +36,7 @@ export async function extractTextFromFile(
     lower.endsWith(".xlsx") ||
     lower.endsWith(".xls")
   ) {
+    const XLSX = await import("@e965/xlsx");
     const workbook = XLSX.read(bytes, { type: "buffer" });
     const chunks: string[] = [];
     for (const sheetName of workbook.SheetNames) {

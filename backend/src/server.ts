@@ -4,7 +4,7 @@ import { signRequest } from "@worldcoin/idkit-core/signing";
 import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
 import { reconcileSubmittedTransactions } from "./relayer/reconcile.js";
-import { handleAgentRoute, startWinnerSelectionLoop } from "./routes/agent.js";
+import { handleAgentRoute } from "./routes/agent.js";
 import { handleTasksRoute } from "./routes/tasks.js";
 import { handleWorkerRoute } from "./routes/worker.js";
 import { createWalletChallenge, consumeWalletChallenge } from "./wallet/challenge.js";
@@ -19,7 +19,7 @@ void reconcileSubmittedTransactions().then((n) => {
   if (n > 0) console.log(`[relayer] reconciled ${n} submitted transaction(s) via RPC receipt`);
 });
 if (process.env.AGENT_WINNER_LOOP !== "false") {
-  startWinnerSelectionLoop();
+  void import("./agent/winner-loop.js").then((m) => m.startWinnerSelectionLoop());
 }
 
 const PORT = Number(process.env.PORT ?? process.env.BACKEND_PORT ?? 3001);

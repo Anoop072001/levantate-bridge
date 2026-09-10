@@ -12,7 +12,6 @@ import {
 import { deriveTaskParams } from "./budget.js";
 import { approveWork, rejectWork, selectWinner } from "./operations.js";
 import { isProofEvaluationAvailable } from "./proof-evaluator.js";
-import { evaluateProofRecord } from "../proof/evaluate-record.js";
 import { scoreBids } from "./score-bids.js";
 
 export interface AgentAction {
@@ -65,6 +64,7 @@ async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
 
   let verdict;
   try {
+    const { evaluateProofRecord } = await import("../proof/evaluate-record.js");
     verdict = await evaluateProofRecord(stored.description, proof);
   } catch (err) {
     return {

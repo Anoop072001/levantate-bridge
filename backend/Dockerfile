@@ -6,6 +6,8 @@ FROM node:22-bookworm-slim AS base
 WORKDIR /app
 
 ENV NODE_ENV=production
+# Free-tier hosts often cap at 256 MiB — keep V8 heap below that with headroom for native libs
+ENV NODE_OPTIONS="--max-old-space-size=192"
 
 # Install deps first for layer caching
 COPY package.json package-lock.json ./

@@ -1,9 +1,13 @@
 import type { ProofRecord } from "../store.js";
 import { evaluateProof } from "../agent/proof-evaluator.js";
-import { extractTextFromFile } from "./extract.js";
 import { parseProofContent, type ProofPayload } from "./payload.js";
 import { proofDownloadUrl } from "./download-url.js";
 import { downloadProofFile } from "./storage.js";
+
+async function extractText(bytes: Buffer, mimeType: string, fileName: string): Promise<string> {
+  const { extractTextFromFile } = await import("./extract.js");
+  return extractTextFromFile(bytes, mimeType, fileName);
+}
 
 async function materializeForEvaluation(payload: ProofPayload): Promise<string> {
   if (payload.kind === "text") {
@@ -13,7 +17,7 @@ async function materializeForEvaluation(payload: ProofPayload): Promise<string> 
   }
 
   const bytes = await downloadProofFile(payload.storagePath);
-  const extracted = await extractTextFromFile(bytes, payload.mimeType, payload.fileName);
+  const extracted = await extractText(bytes, payload.mimeType, payload.fileName);
   const parts = [
     `Submission type: file upload`,
     `File name: ${payload.fileName}`,
@@ -32,26 +36,6 @@ export async function evaluateProofRecord(taskDescription: string, proof: ProofR
   return evaluateProof(taskDescription, evaluable, payload.kind);
 }
 
-export async function describeProofForApi(proof: ProofRecord) {
-  const payload = parseProofContent(proof.content);
-  if (payload.kind === "text") {
-    return {
-      kind: "text" as const,
-      text: payload.text,
-      link: payload.link ?? null,
-    };
-  }
-
-  return {
-    kind: "file" as const,
-    fileName: payload.fileName,
-    mimeType: payload.mimeType,
-    sizeBytes: payload.sizeBytes,
-    note: payload.note ?? null,
-    downloadUrl: proofDownloadUrl(proof.taskId, proof.round),
-  };
-}
-
 /** Full proof text for the agent — includes Excel/PDF/Word content extracted from file uploads. */
 export async function describeProofForAgent(proof: ProofRecord) {
   const payload = parseProofContent(proof.content);
@@ -65,7 +49,7 @@ export async function describeProofForAgent(proof: ProofRecord) {
 
   try {
     const bytes = await downloadProofFile(payload.storagePath);
-    const extractedContent = await extractTextFromFile(bytes, payload.mimeType, payload.fileName);
+    const extractedContent = await extractText(bytes, payload.mimeType, payload.fileName);
     return {
       kind: "file" as const,
       fileName: payload.fileName,

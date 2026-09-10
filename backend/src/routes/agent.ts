@@ -3,7 +3,6 @@ import { pendingHandle } from "../relayer/submit.js";
 import {
   deriveTaskParams,
   runAgentCycle,
-  runWinnerSelectionCycle,
   scoreBids,
 } from "../agent/runner.js";
 import {
@@ -17,9 +16,8 @@ import {
   updateAgentChatStatus,
   updateAgentChatTitle,
 } from "../agent/chat-store.js";
-import { isChatAvailable, runChatTurn, type ChatMessage } from "../agent/chat.js";
+import type { ChatMessage } from "../agent/chat.js";
 import type { AgentStep } from "../agent/tools.js";
-import { postTask } from "../agent/operations.js";
 import { getTask, listBidsForTask } from "../store.js";
 import {
   checkAgentFunding,
@@ -90,6 +88,7 @@ export async function handleAgentRoute(
   }
 
   if (req.method === "GET" && url.pathname === "/api/agent/chat") {
+    const { isChatAvailable } = await import("../agent/chat.js");
     json(200, { available: isChatAvailable() });
     return true;
   }
@@ -151,7 +150,8 @@ export async function handleAgentRoute(
       json(400, { error: "content required" });
       return true;
     }
-    if (!isChatAvailable()) {
+    const chatMod = await import("../agent/chat.js");
+    if (!chatMod.isChatAvailable()) {
       json(503, { error: "Agent chat requires OPENAI_API_KEY in .env.local" });
       return true;
     }
@@ -180,7 +180,7 @@ export async function handleAgentRoute(
         ...prior.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content },
       ];
-      const turn = await runChatTurn(history, { resumingFromIdle });
+      const turn = await chatMod.runChatTurn(history, { resumingFromIdle });
 
       const steps: AgentStep[] = turn.steps;
       const assistantMessage = await appendAgentChatMessage({
@@ -219,12 +219,13 @@ export async function handleAgentRoute(
       json(400, { error: "messages required" });
       return true;
     }
-    if (!isChatAvailable()) {
+    const chatMod = await import("../agent/chat.js");
+    if (!chatMod.isChatAvailable()) {
       json(503, { error: "Agent chat requires OPENAI_API_KEY in .env.local" });
       return true;
     }
     try {
-      json(200, await runChatTurn(history));
+      json(200, await chatMod.runChatTurn(history));
     } catch (err) {
       json(502, { error: err instanceof Error ? err.message : "Agent chat failed" });
     }
@@ -241,6 +242,7 @@ export async function handleAgentRoute(
       json(400, { error: "description required" });
       return true;
     }
+    const { postTask } = await import("../agent/operations.js");
     const result = await postTask({
       description: input.description,
       bidDeadlineSeconds: input.bidDeadlineSeconds ?? 3600,
@@ -289,36 +291,3 @@ export async function handleAgentRoute(
   return false;
 }
 
-let winnerTimer: ReturnType<typeof setInterval> | undefined;
-
-function runWinnerSelectionSafely(): void {
-  void runWinnerSelectionCycle()
-    .then((result) => {
-      for (const action of result.actions) {
-        if (action.error) {
-          console.warn(`[agent] task ${action.taskId} select_winner failed: ${action.error}`);
-        } else if (action.transaction) {
-          console.log(
-            `[agent] task ${action.taskId} select_winner submitted (${action.transaction.status})`,
-          );
-        }
-      }
-    })
-    .catch((err) => {
-      console.warn("[agent] winner selection error:", err instanceof Error ? err.message : err);
-    });
-}
-
-export function startWinnerSelectionLoop(intervalMs = 30_000): void {
-  if (winnerTimer) return;
-  runWinnerSelectionSafely();
-  winnerTimer = setInterval(runWinnerSelectionSafely, intervalMs);
-  console.log(`Winner selection loop enabled (every ${intervalMs / 1000}s, runs immediately on start)`);
-}
-
-export function stopWinnerSelectionLoop(): void {
-  if (winnerTimer) {
-    clearInterval(winnerTimer);
-    winnerTimer = undefined;
-  }
-}
