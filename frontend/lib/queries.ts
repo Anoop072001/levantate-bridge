@@ -2,6 +2,8 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchBids, fetchTask, fetchTaskProof, fetchTasks, fetchWorkerBalance } from "./api";
+import { isAgentSelectingTask } from "./task-status";
+import type { Task } from "./types";
 
 export const queryKeys = {
   tasks: ["tasks"] as const,
@@ -16,6 +18,11 @@ export const queryKeys = {
 };
 
 const LIST_STALE_MS = 10_000;
+const SELECTING_POLL_MS = 5_000;
+
+function tasksNeedPolling(tasks: Task[] | undefined): boolean {
+  return tasks?.some(isAgentSelectingTask) ?? false;
+}
 
 export function useTasksQuery() {
   return useQuery({
@@ -23,6 +30,7 @@ export function useTasksQuery() {
     queryFn: fetchTasks,
     staleTime: LIST_STALE_MS,
     refetchOnWindowFocus: true,
+    refetchInterval: (query) => (tasksNeedPolling(query.state.data as Task[] | undefined) ? SELECTING_POLL_MS : false),
   });
 }
 
@@ -33,6 +41,10 @@ export function useTaskQuery(taskId: number) {
     enabled: Number.isFinite(taskId) && taskId >= 0,
     staleTime: LIST_STALE_MS,
     refetchOnWindowFocus: true,
+    refetchInterval: (query) => {
+      const task = query.state.data as Task | undefined;
+      return task && isAgentSelectingTask(task) ? SELECTING_POLL_MS : false;
+    },
   });
 }
 

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { createPublicClient, erc20Abi, http } from "viem";
-import { arcTestnet } from "viem/chains";
+import { erc20Abi } from "viem";
 import { createCircleClient } from "../src/circle/client.js";
+import { createArcPublicClient } from "../src/chain/escrow.js";
 import { loadRootEnv, requireEnv } from "../src/env.js";
 
 loadRootEnv();
@@ -28,12 +28,7 @@ async function main() {
   const recipient =
     process.env.CIRCLE_TRANSFER_RECIPIENT ??
     "0xC95ca8b8610A99314D27a923E580109FFeC4b3D1";
-  const rpcUrl = process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.io";
-
-  const publicClient = createPublicClient({
-    chain: arcTestnet,
-    transport: http(rpcUrl),
-  });
+  const publicClient = createArcPublicClient();
 
   const balanceBefore = await publicClient.readContract({
     address: ARC_USDC,

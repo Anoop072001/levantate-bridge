@@ -6,6 +6,9 @@ import { resolve } from "node:path";
 const repoRoot = resolve(import.meta.dirname, "..");
 loadEnvConfig(repoRoot);
 
+const DEFAULT_ARC_RPC_URLS =
+  "https://rpc.testnet.arc.io,https://rpc.blockdaemon.testnet.arc.io,https://rpc.drpc.testnet.arc.io,https://rpc.quicknode.testnet.arc.io";
+
 const x402Stubs: Record<string, string> = {
   "@base-org/account": "./lib/base-org-account-stub.ts",
 };
@@ -20,7 +23,7 @@ const nextConfig: NextConfig = {
       process.env.NEXT_PUBLIC_WORLD_RP_ID ?? process.env.WORLD_RP_ID ?? "",
     NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:
       process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
-    NEXT_PUBLIC_ARC_RPC_URL: process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.io",
+    NEXT_PUBLIC_ARC_RPC_URLS: process.env.ARC_RPC_URL ?? DEFAULT_ARC_RPC_URLS,
   },
   // RainbowKit's main bundle imports Coinbase Base Account, which dynamically
   // requires optional x402/Solana clients we do not use on Arc.

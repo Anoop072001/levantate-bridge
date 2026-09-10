@@ -42,7 +42,7 @@ All packages read from this single file. Required keys are listed in [`AGENTS.md
 
 - `ESCROW_CONTRACT_ADDRESS`
 - `ESCROW_DEPLOY_BLOCK`
-- `SUBGRAPH_QUERY_URL`
+- `GRAPH_QUERY_API_KEY` and `GRAPH_SUBGRAPH_ID`
 
 ## Quick start
 
@@ -98,7 +98,7 @@ graph auth <GRAPH_AUTH_DEPLOY_KEY>
 npm run deploy
 ```
 
-Update `SUBGRAPH_QUERY_URL` in `.env.local` after deploy.
+After publishing to the Graph Network, set `GRAPH_QUERY_API_KEY` (from [Subgraph Studio → API Keys](https://thegraph.com/studio/)) and `GRAPH_SUBGRAPH_ID` in `.env.local`.
 
 ## Demo flow (single worker)
 

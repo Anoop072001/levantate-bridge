@@ -319,7 +319,7 @@ export async function listTasks(): Promise<TaskRecord[]> {
   const { data, error } = await getSupabase()
     .from("tasks")
     .select("*")
-    .order("id", { ascending: true })
+    .order("id", { ascending: false })
     .returns<TaskRow[]>();
   if (error) fail("listTasks", error);
   return (data ?? []).map(toTask);

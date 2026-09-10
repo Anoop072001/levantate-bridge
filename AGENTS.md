@@ -267,7 +267,8 @@ Environment inventory — keep this current as values are obtained:
 | `CIRCLE_WALLET_SET_ID` | 1 | produced by Phase 1 |
 | `CIRCLE_AGENT_WALLET_ID` | 4 | produced by Phase 1 |
 | `CIRCLE_RELAYER_WALLET_ID` | 4 | produced by Phase 4 |
-| `SUBGRAPH_QUERY_URL` | 6, 7 | produced by Phase 5 deploy |
+| `GRAPH_QUERY_API_KEY` | 6, 7 | Subgraph Studio → API Keys (query gateway; not the deploy key) |
+| `GRAPH_SUBGRAPH_ID` | 6, 7 | Network subgraph id (`Fnr7E8tC1HbD1bvdAsTXMwe5R5kZdx98pH1bhmcWWGeL`) |
 | `SUPABASE_URL` | 4 | pending — created with the hosted Supabase project |
 | `SUPABASE_SERVICE_ROLE_KEY` | 4 | pending — **server-only**, bypasses RLS |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | 8 | pending — public WalletConnect Cloud / Reown id for RainbowKit |

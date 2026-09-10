@@ -6,7 +6,7 @@ import { handleSubmitWork } from "../proof/submit-work.js";
 import { readUsdcBalance } from "../chain/usdc-balance.js";
 import { createArcPublicClient, getEscrowAddress } from "../chain/escrow.js";
 import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
-import { enrichAllTasks, enrichTask } from "../chain/task-view.js";
+import { enrichAllTasks, enrichTaskWithActivity } from "../chain/task-view.js";
 import { requireEnv } from "../env.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
 import {
@@ -78,7 +78,7 @@ export async function handleTasksRoute(
       json(404, { error: "Task not found" });
       return true;
     }
-    json(200, { task: await enrichTask(stored, client) });
+    json(200, { task: await enrichTaskWithActivity(stored, client) });
     return true;
   }
 

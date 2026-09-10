@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createPublicClient, getContract, http, type PublicClient } from "viem";
+import { createPublicClient, fallback, getContract, http, type PublicClient } from "viem";
 import { arcTestnet } from "viem/chains";
 import { loadRootEnv, requireEnv } from "../env.js";
+import { getArcRpcUrls } from "./rpc-url.js";
 import taskEscrowArtifact from "../../abi/TaskEscrow.json" with { type: "json" };
 
 loadRootEnv();
@@ -10,14 +11,18 @@ loadRootEnv();
 const ARC_USDC = "0x3600000000000000000000000000000000000000" as const;
 
 export function createArcPublicClient(): PublicClient {
-  const rpcUrl = process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.io";
   return createPublicClient({
     chain: arcTestnet,
-    transport: http(rpcUrl, {
-      timeout: 15_000,
-      retryCount: 2,
-      retryDelay: 750,
-    }),
+    transport: fallback(
+      getArcRpcUrls().map((url) =>
+        http(url, {
+          timeout: 15_000,
+          retryCount: 2,
+          retryDelay: 750,
+        }),
+      ),
+      { rank: false },
+    ),
   });
 }
 

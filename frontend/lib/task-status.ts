@@ -24,3 +24,16 @@ export function taskDisplayStatus(task: Task): string {
 
   return task.stateLabel;
 }
+
+export function isAgentSelectingTask(task: Task): boolean {
+  return taskDisplayStatus(task) === "Selecting bidder";
+}
+
+export function agentSelectingLabel(task: Task): string {
+  if (task.agentActivity?.phase === "selecting_winner") {
+    return task.agentActivity.relayStatus === "submitted"
+      ? "Confirming on-chain assignment…"
+      : "Submitting winner assignment…";
+  }
+  return "Agent selecting winner…";
+}

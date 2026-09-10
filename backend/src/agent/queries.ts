@@ -45,8 +45,8 @@ const WORKERS_BATCH_QUERY = `
     }
   }`;
 
-const PAYMENTS_CACHE_MS = 300_000;
-const WORKER_CACHE_MS = 300_000;
+const PAYMENTS_CACHE_MS = 900_000;
+const WORKER_CACHE_MS = 900_000;
 
 let paymentsCache: { at: number; data: PaymentRecord[] } | null = null;
 let paymentsInflight: Promise<PaymentRecord[]> | null = null;

@@ -252,34 +252,34 @@ export async function handleAgentRoute(
   return false;
 }
 
-let agentTimer: ReturnType<typeof setInterval> | undefined;
 let winnerTimer: ReturnType<typeof setInterval> | undefined;
 
-export function startWinnerSelectionLoop(intervalMs = 60_000): void {
-  if (winnerTimer) return;
-  winnerTimer = setInterval(() => {
-    void runWinnerSelectionCycle().catch((err) => {
+function runWinnerSelectionSafely(): void {
+  void runWinnerSelectionCycle()
+    .then((result) => {
+      for (const action of result.actions) {
+        if (action.error) {
+          console.warn(`[agent] task ${action.taskId} select_winner failed: ${action.error}`);
+        } else if (action.transaction) {
+          console.log(
+            `[agent] task ${action.taskId} select_winner submitted (${action.transaction.status})`,
+          );
+        }
+      }
+    })
+    .catch((err) => {
       console.warn("[agent] winner selection error:", err instanceof Error ? err.message : err);
     });
-  }, intervalMs);
-  console.log(`Winner selection loop enabled (every ${intervalMs / 1000}s)`);
 }
 
-export function startAgentLoop(intervalMs = 30_000): void {
-  if (agentTimer) return;
-  agentTimer = setInterval(() => {
-    void runAgentCycle().catch((err) => {
-      console.warn("[agent] cycle error:", err instanceof Error ? err.message : err);
-    });
-  }, intervalMs);
-  console.log(`Background agent loop enabled (every ${intervalMs / 1000}s) — set AGENT_AUTO_LOOP=true`);
+export function startWinnerSelectionLoop(intervalMs = 30_000): void {
+  if (winnerTimer) return;
+  runWinnerSelectionSafely();
+  winnerTimer = setInterval(runWinnerSelectionSafely, intervalMs);
+  console.log(`Winner selection loop enabled (every ${intervalMs / 1000}s, runs immediately on start)`);
 }
 
-export function stopAgentLoop(): void {
-  if (agentTimer) {
-    clearInterval(agentTimer);
-    agentTimer = undefined;
-  }
+export function stopWinnerSelectionLoop(): void {
   if (winnerTimer) {
     clearInterval(winnerTimer);
     winnerTimer = undefined;

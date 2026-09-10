@@ -47,6 +47,10 @@ async function assignWinner(taskId: number): Promise<AgentAction> {
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
   const stored = await getTask(taskId);
   if (!stored) {
@@ -106,6 +110,39 @@ async function maybeAssignWinner(taskId: number): Promise<AgentAction | undefine
   return assignWinner(taskId);
 }
 
+/**
+ * Evaluates and approves/rejects proof for one task. Called when a worker submits work —
+ * waits for on-chain Submitted state after the relay lands.
+ */
+export async function reviewSubmittedTask(taskId: number): Promise<AgentAction | undefined> {
+  if (!isProofEvaluationAvailable()) {
+    console.log(`[agent] task ${taskId} proof review skipped (no LLM API key)`);
+    return undefined;
+  }
+
+  const inFlight = await listInFlightRelaysForTask(taskId);
+  if (inFlight.some((tx) => tx.kind === "approve_work" || tx.kind === "reject_work")) {
+    return undefined;
+  }
+
+  for (let i = 0; i < 30; i++) {
+    const onChain = await readOnChainTask(taskId);
+    if (onChain.state === 3) {
+      return evaluateSubmittedTask(taskId);
+    }
+    if (onChain.state !== 2) {
+      console.warn(
+        `[agent] task ${taskId} proof review skipped — state is ${onChain.stateLabel}, expected Assigned or Submitted`,
+      );
+      return undefined;
+    }
+    await sleep(2000);
+  }
+
+  console.warn(`[agent] task ${taskId} proof review timed out waiting for Submitted state`);
+  return undefined;
+}
+
 /** Select winners for tasks whose bid deadline passed. Runs by default; proof review stays manual. */
 export async function runWinnerSelectionCycle(): Promise<AgentRunResult> {
   const actions: AgentAction[] = [];
@@ -127,26 +164,29 @@ export async function runWinnerSelectionCycle(): Promise<AgentRunResult> {
   return { actions, timestamp: new Date().toISOString() };
 }
 
-export async function runAgentCycle(): Promise<AgentRunResult> {
+/** Manual recovery: re-review any task already in Submitted state (POST /api/agent/run-once). */
+async function runProofReviewCycle(): Promise<AgentAction[]> {
+  const actions: AgentAction[] = [];
   const client = createArcPublicClient();
-  const winnerResult = await runWinnerSelectionCycle();
-  const actions: AgentAction[] = [...winnerResult.actions];
   const stored = await listTasks();
 
   for (const task of stored) {
     const onChain = await readOnChainTask(task.id, client);
-
-    if (onChain.state === 3) {
-      if (!isProofEvaluationAvailable()) {
-        console.log(`[agent] task ${task.id} submitted — skipping proof evaluation (no LLM API key)`);
-      } else {
-        actions.push(await evaluateSubmittedTask(task.id));
-      }
-    }
-
-    // Missed submission deadlines are not auto-reclaimed — reclaim is an explicit call so the
-    // agent operator decides whether the task is still worth reopening.
+    if (onChain.state !== 3) continue;
+    const action = await reviewSubmittedTask(task.id);
+    if (action) actions.push(action);
   }
+
+  return actions;
+}
+
+export async function runAgentCycle(): Promise<AgentRunResult> {
+  const winnerResult = await runWinnerSelectionCycle();
+  const proofActions = await runProofReviewCycle();
+  const actions: AgentAction[] = [...winnerResult.actions, ...proofActions];
+
+  // Missed submission deadlines are not auto-reclaimed — reclaim is an explicit call so the
+  // agent operator decides whether the task is still worth reopening.
 
   return { actions, timestamp: new Date().toISOString() };
 }

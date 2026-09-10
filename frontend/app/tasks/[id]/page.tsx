@@ -3,17 +3,17 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useRef, useState } from "react";
-import { ArrowRight, Clock, Coins, MapPin } from "lucide-react";
+import { ArrowRight, Clock, Coins, Loader2, MapPin } from "lucide-react";
 import { BidSheet } from "@/components/BidSheet";
 import { Countdown } from "@/components/Countdown";
 import { LinkWalletButton } from "@/components/LinkWalletButton";
 import { PageFrame } from "@/components/PageFrame";
 import { PendingTransaction } from "@/components/PendingTransaction";
 import { submitProofFile, submitProofText, usdcMicroToDisplay } from "@/lib/api";
-import { insetButtonDarkClass } from "@/lib/cn";
+import { cn, insetButtonDarkClass } from "@/lib/cn";
 import { useBidsQuery, useTaskProofQuery, useTaskQuery, useWorkerBalanceQuery } from "@/lib/queries";
 import { shortAddress, taskHeadline } from "@/lib/task-display";
-import { isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
+import { agentSelectingLabel, isAgentSelectingTask, isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
 import { useWorkerSession } from "@/lib/use-worker-session";
 import type { RelayedTransaction } from "@/lib/types";
 
@@ -56,6 +56,7 @@ export default function TaskDetailPage() {
     task.assignedWorker.toLowerCase() === session.walletAddress.toLowerCase();
 
   const bidOpen = task ? isBiddingOpen(task) : false;
+  const agentSelecting = task ? isAgentSelectingTask(task) : false;
 
   const myBids =
     session && task
@@ -122,14 +123,31 @@ export default function TaskDetailPage() {
             <MapPin className="h-3.5 w-3.5" /> Arc testnet
           </span>
           <span>•</span>
-          <span className="inline-flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5" /> {taskDisplayStatus(task)}
+          <span
+            className={cn(
+              "inline-flex items-center gap-1",
+              agentSelecting && "text-foreground",
+            )}
+          >
+            {agentSelecting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Clock className="h-3.5 w-3.5" />
+            )}{" "}
+            {agentSelecting ? agentSelectingLabel(task) : taskDisplayStatus(task)}
           </span>
           <span>•</span>
           <span className="inline-flex items-center gap-1">
             <Coins className="h-3.5 w-3.5" /> {usdcMicroToDisplay(task.maxBudget)} USDC
           </span>
         </div>
+        {agentSelecting && (
+          <p className="flex max-w-2xl items-center gap-2 rounded-lg border border-border bg-muted px-4 py-3 text-sm text-foreground">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            {agentSelectingLabel(task)} The agent picks the winning bid automatically after the
+            deadline — this page refreshes every few seconds until assignment lands on-chain.
+          </p>
+        )}
         {task.state === 0 || task.state === 1 ? (
           <Countdown deadlineUnix={task.bidDeadline} label="Bid deadline" className="block text-sm" />
         ) : null}
@@ -347,7 +365,10 @@ export default function TaskDetailPage() {
       )}
 
       {task.state === 3 && isAssignedWorker && (
-        <p className="mt-8 text-sm">Work submitted — waiting for agent review. You can resubmit if the agent rejects.</p>
+        <p className="mt-8 text-sm">
+          Work submitted — the agent is reviewing your proof now. You can resubmit if the agent
+          rejects.
+        </p>
       )}
 
       {task.state === 4 && isAssignedWorker && (

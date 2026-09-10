@@ -2,11 +2,11 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Clock, Coins, MapPin, Search, Users } from "lucide-react";
+import { ArrowRight, Clock, Coins, Loader2, MapPin, Search, Users } from "lucide-react";
 import { Countdown } from "@/components/Countdown";
 import { cn } from "@/lib/cn";
 import { taskBudgetLabel, taskHeadline } from "@/lib/task-display";
-import { isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
+import { agentSelectingLabel, isAgentSelectingTask, isBiddingOpen, taskDisplayStatus } from "@/lib/task-status";
 import { secondsRemaining } from "@/lib/time";
 import type { Task } from "@/lib/types";
 
@@ -51,10 +51,7 @@ export function TaskBoard({
     if (sortBy === "Title A–Z") {
       list = [...list].sort((a, b) => taskHeadline(a.description).localeCompare(taskHeadline(b.description)));
     } else if (!sortBy) {
-      list = [...list].sort((a, b) => {
-        const rank = (t: Task) => (isBiddingOpen(t) ? 0 : 1);
-        return rank(a) - rank(b) || Number(b.maxBudget) - Number(a.maxBudget);
-      });
+      list = [...list].sort((a, b) => b.id - a.id);
     }
     return list;
   }, [tasks, stateFilter, roundFilter, search, sortBy]);
@@ -175,6 +172,7 @@ function TaskRow({
   onBid: () => void;
 }) {
   const open = isBiddingOpen(task);
+  const selecting = isAgentSelectingTask(task);
   const status = taskDisplayStatus(task);
   const closed = !open && (task.state === 0 || task.state === 1);
 
@@ -196,7 +194,17 @@ function TaskRow({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <MetaItem icon={<MapPin className="h-2.5 w-2.5" />} label="Arc testnet" />
           <Dot />
-          <MetaItem icon={<Clock className="h-2.5 w-2.5" />} label={status} />
+          <MetaItem
+            icon={
+              selecting ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin text-foreground" />
+              ) : (
+                <Clock className="h-2.5 w-2.5" />
+              )
+            }
+            label={selecting ? agentSelectingLabel(task) : status}
+            highlight={selecting}
+          />
           <Dot />
           <MetaItem icon={<Coins className="h-2.5 w-2.5" />} label={taskBudgetLabel(task)} />
           <Dot />
@@ -216,6 +224,11 @@ function TaskRow({
           Bid
           <ArrowRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-0.5" />
         </button>
+      ) : selecting ? (
+        <span className="mt-2 flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground sm:mt-0">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          {agentSelectingLabel(task)}
+        </span>
       ) : (
         <span className="mt-2 shrink-0 text-sm text-muted-foreground sm:mt-0">Closed</span>
       )}
@@ -223,9 +236,22 @@ function TaskRow({
   );
 }
 
-function MetaItem({ icon, label }: { icon: React.ReactNode; label: string }) {
+function MetaItem({
+  icon,
+  label,
+  highlight,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  highlight?: boolean;
+}) {
   return (
-    <span className="flex items-center gap-1 text-xs leading-none text-muted-foreground">
+    <span
+      className={cn(
+        "flex items-center gap-1 text-xs leading-none",
+        highlight ? "text-foreground" : "text-muted-foreground",
+      )}
+    >
       {icon}
       {label}
     </span>

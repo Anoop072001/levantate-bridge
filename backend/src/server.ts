@@ -3,7 +3,7 @@ import { URL } from "node:url";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
-import { handleAgentRoute, startAgentLoop, startWinnerSelectionLoop } from "./routes/agent.js";
+import { handleAgentRoute, startWinnerSelectionLoop } from "./routes/agent.js";
 import { handleTasksRoute } from "./routes/tasks.js";
 import { createWalletChallenge, consumeWalletChallenge } from "./wallet/challenge.js";
 import { createSignalToken, registerExpectedSignal } from "./world-id/signals.js";
@@ -15,9 +15,6 @@ import {
 loadRootEnv();
 if (process.env.AGENT_WINNER_LOOP !== "false") {
   startWinnerSelectionLoop();
-}
-if (process.env.AGENT_AUTO_LOOP === "true") {
-  startAgentLoop();
 }
 
 const PORT = Number(process.env.BACKEND_PORT ?? 3001);
@@ -55,7 +52,8 @@ const server = createServer(async (req, res) => {
   const send = (status: number, body: unknown) => json(res, status, body);
 
   if (req.method === "GET" && url.pathname === "/health") {
-    send(200, { ok: true });
+    const { getSubgraphStatus } = await import("./subgraph/client.js");
+    send(200, { ok: true, subgraph: getSubgraphStatus() });
     return;
   }
 

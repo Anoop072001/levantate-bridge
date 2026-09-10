@@ -1,6 +1,45 @@
 import type { PublicClient } from "viem";
-import { readOnChainTask, TASK_STATE } from "./task-state.js";
-import { listBidsForTask, type TaskRecord } from "../store.js";
+import { nowSeconds, readOnChainTask, TASK_STATE } from "./task-state.js";
+import { listBidsForTask, listInFlightRelaysForTask, type TaskRecord } from "../store.js";
+
+export type AgentActivity =
+  | {
+      phase: "selecting_winner";
+      relayStatus: "queued" | "submitted";
+      txHash: string | null;
+    }
+  | { phase: "waiting_for_agent" };
+
+function taskNeedsWinnerSelection(task: {
+  state: number;
+  bidDeadline: string;
+  currentRoundBidCount: string;
+}): boolean {
+  const inBidWindow = task.state === 0 || task.state === 1;
+  const deadlinePassed = nowSeconds() > Number(task.bidDeadline);
+  return inBidWindow && deadlinePassed && Number(task.currentRoundBidCount) > 0;
+}
+
+async function attachAgentActivity<T extends Awaited<ReturnType<typeof enrichTask>>>(
+  task: T,
+): Promise<T & { agentActivity?: AgentActivity }> {
+  if (!taskNeedsWinnerSelection(task)) return task;
+
+  const inFlight = await listInFlightRelaysForTask(task.id);
+  const select = inFlight.find((tx) => tx.kind === "select_winner");
+  if (select) {
+    return {
+      ...task,
+      agentActivity: {
+        phase: "selecting_winner",
+        relayStatus: select.status as "queued" | "submitted",
+        txHash: select.txHash ?? null,
+      },
+    };
+  }
+
+  return { ...task, agentActivity: { phase: "waiting_for_agent" } };
+}
 
 const ZERO = "0x0000000000000000000000000000000000000000" as const;
 
@@ -56,7 +95,11 @@ export type EnrichedTask = Awaited<ReturnType<typeof enrichTask>>;
 export async function enrichAllTasks(tasks: TaskRecord[], client?: PublicClient) {
   const enriched = [];
   for (const task of tasks) {
-    enriched.push(await enrichTask(task, client));
+    enriched.push(await attachAgentActivity(await enrichTask(task, client)));
   }
   return enriched;
+}
+
+export async function enrichTaskWithActivity(task: TaskRecord, client?: PublicClient) {
+  return attachAgentActivity(await enrichTask(task, client));
 }

@@ -12,6 +12,11 @@ export interface Task {
   currentRoundBidCount: string;
   /** True when Arc RPC failed and the UI is showing the last stored snapshot. */
   stale?: boolean;
+  agentActivity?: {
+    phase: "selecting_winner" | "waiting_for_agent";
+    relayStatus?: "queued" | "submitted";
+    txHash?: string | null;
+  };
 }
 
 export interface RelayedTransaction {

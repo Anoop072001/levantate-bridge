@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE="$ROOT/.env.local"
-RPC="${ARC_RPC_URL:-https://rpc.testnet.arc.io}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing $ENV_FILE" >&2
@@ -14,6 +13,12 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+
+if [[ -n "${ARC_RPC_URL:-}" ]]; then
+  RPC="${ARC_RPC_URL%%,*}"
+else
+  RPC="https://rpc.testnet.arc.io"
+fi
 
 export PATH="${PATH}:${HOME}/.foundry/bin"
 
