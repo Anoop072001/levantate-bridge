@@ -10,6 +10,7 @@
     "setup-relayer-wallet": "tsx scripts/setup-relayer-wallet.ts",
     "verify-usdc-transfer": "tsx scripts/verify-usdc-transfer.ts",
     "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts",
     "migrate-db-json": "tsx scripts/migrate-db-json-to-supabase.ts",
     "apply-pending-signals": "tsx scripts/apply-pending-signals.ts",
     "apply-agent-chats": "tsx scripts/apply-agent-chats.ts",

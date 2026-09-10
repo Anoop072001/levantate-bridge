@@ -1,9 +1,12 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const ROOT_ENV = resolve(import.meta.dirname, "../../.env.local");
 
+/** Loads repo-root `.env.local` when present (local dev). Skips if missing — e.g. Render dashboard env. */
 export function loadRootEnv(): void {
+  if (!existsSync(ROOT_ENV)) return;
+
   const text = readFileSync(ROOT_ENV, "utf8");
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
@@ -12,14 +15,17 @@ export function loadRootEnv(): void {
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq);
     const value = trimmed.slice(eq + 1).trim();
-    process.env[key] = value;
+    // Platform env (Render, etc.) wins over file values.
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
   }
 }
 
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`Missing ${name} in .env.local`);
+    throw new Error(`Missing ${name} in environment (set in .env.local locally or host dashboard)`);
   }
   return value;
 }

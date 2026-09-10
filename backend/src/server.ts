@@ -18,7 +18,7 @@ if (process.env.AGENT_WINNER_LOOP !== "false") {
   startWinnerSelectionLoop();
 }
 
-const PORT = Number(process.env.BACKEND_PORT ?? 3001);
+const PORT = Number(process.env.PORT ?? process.env.BACKEND_PORT ?? 3001);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
 
 function json(res: import("node:http").ServerResponse, status: number, body: unknown) {
