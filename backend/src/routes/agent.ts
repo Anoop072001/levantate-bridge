@@ -1,11 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pendingHandle } from "../relayer/submit.js";
 import {
-  deriveTaskParams,
-  runAgentCycle,
-  scoreBids,
-} from "../agent/runner.js";
-import {
   appendAgentChatMessage,
   createAgentChat,
   deleteAgentChat,
@@ -65,6 +60,7 @@ export async function handleAgentRoute(
 
   if (req.method === "GET" && url.pathname === "/api/agent/budget") {
     try {
+      const { deriveTaskParams } = await import("../agent/budget.js");
       const params = await deriveTaskParams();
       json(200, {
         maxBudget: params.maxBudget.toString(),
@@ -79,6 +75,7 @@ export async function handleAgentRoute(
 
   if (req.method === "POST" && url.pathname === "/api/agent/run-once") {
     try {
+      const { runAgentCycle } = await import("../agent/runner.js");
       const result = await runAgentCycle();
       json(200, result);
     } catch (err) {
@@ -280,6 +277,7 @@ export async function handleAgentRoute(
         ? Number(url.searchParams.get("round"))
         : onChain.round;
       const bids = await listBidsForTask(taskId, round);
+      const { scoreBids } = await import("../agent/score-bids.js");
       const selection = await scoreBids(bids, onChain.maxBudget);
       json(200, selection);
     } catch (err) {

@@ -1,12 +1,15 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-/** Repo root `.env.local` — primary path for local dev. */
-export const ROOT_ENV = resolve(import.meta.dirname, "../../.env.local");
+/** Repo root `.env.local` — primary path for local dev (works from `src/` and compiled `dist/src/`). */
+export const ROOT_ENV = resolve(import.meta.dirname, "../../../.env.local");
 
 const ENV_FILE_CANDIDATES = [
   ROOT_ENV,
-  resolve(import.meta.dirname, "../.env.local"), // backend/.env.local (Render secret file with root dir backend)
+  resolve(import.meta.dirname, "../../.env.local"),
+  resolve(import.meta.dirname, "../.env.local"),
+  resolve(process.cwd(), ".env.local"),
+  resolve(process.cwd(), "../.env.local"),
   "/etc/secrets/.env.local",
 ];
 

@@ -4,7 +4,6 @@ import { Busboy, type BusboyHeaders } from "@fastify/busboy";
 import { createArcPublicClient, getEscrowAddress } from "../chain/escrow.js";
 import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
 import { requireEnv } from "../env.js";
-import { reviewSubmittedTask } from "../agent/runner.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
 import {
   findWorkerByNullifier,
@@ -240,11 +239,13 @@ export async function handleSubmitWork(
     createdAt: new Date().toISOString(),
   });
 
-  void reviewSubmittedTask(taskId).catch((err) => {
-    console.warn(
-      `[agent] task ${taskId} proof review failed: ${err instanceof Error ? err.message : err}`,
-    );
-  });
+  void import("../agent/runner.js")
+    .then((m) => m.reviewSubmittedTask(taskId))
+    .catch((err) => {
+      console.warn(
+        `[agent] task ${taskId} proof review failed: ${err instanceof Error ? err.message : err}`,
+      );
+    });
 
   json(202, { ...pendingHandle(tx), proofKind: payload.kind });
   return true;

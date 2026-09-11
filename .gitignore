@@ -19,6 +19,7 @@ contracts/broadcast/
 
 # Backend runtime data
 backend/data/
+backend/dist/
 
 # The Graph
 subgraph/generated/

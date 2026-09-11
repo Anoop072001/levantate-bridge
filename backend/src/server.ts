@@ -4,9 +4,6 @@ import { signRequest } from "@worldcoin/idkit-core/signing";
 import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
 import { reconcileSubmittedTransactions } from "./relayer/reconcile.js";
-import { handleAgentRoute } from "./routes/agent.js";
-import { handleTasksRoute } from "./routes/tasks.js";
-import { handleWorkerRoute } from "./routes/worker.js";
 import { createWalletChallenge, consumeWalletChallenge } from "./wallet/challenge.js";
 import { createSignalToken, registerExpectedSignal } from "./world-id/signals.js";
 import {
@@ -24,6 +21,29 @@ if (process.env.AGENT_WINNER_LOOP !== "false") {
 
 const PORT = Number(process.env.PORT ?? process.env.BACKEND_PORT ?? 3001);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
+
+type AgentRoute = typeof import("./routes/agent.js");
+type TasksRoute = typeof import("./routes/tasks.js");
+type WorkerRoute = typeof import("./routes/worker.js");
+
+let agentRouteMod: AgentRoute | undefined;
+let tasksRouteMod: TasksRoute | undefined;
+let workerRouteMod: WorkerRoute | undefined;
+
+async function agentRoute() {
+  agentRouteMod ??= await import("./routes/agent.js");
+  return agentRouteMod;
+}
+
+async function tasksRoute() {
+  tasksRouteMod ??= await import("./routes/tasks.js");
+  return tasksRouteMod;
+}
+
+async function workerRoute() {
+  workerRouteMod ??= await import("./routes/worker.js");
+  return workerRouteMod;
+}
 
 function json(res: import("node:http").ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
@@ -83,9 +103,9 @@ const server = createServer(async (req, res) => {
     req.method === "POST" && !isMultipartSubmit ? await readBody(req) : undefined;
 
   try {
-    if (await handleAgentRoute(req, res, url, body, send)) return;
-    if (await handleTasksRoute(req, res, url, body, send)) return;
-    if (await handleWorkerRoute(req, res, url, body, send)) return;
+    if (await (await agentRoute()).handleAgentRoute(req, res, url, body, send)) return;
+    if (await (await tasksRoute()).handleTasksRoute(req, res, url, body, send)) return;
+    if (await (await workerRoute()).handleWorkerRoute(req, res, url, body, send)) return;
   } catch (err) {
     send(500, { error: err instanceof Error ? err.message : "Request failed" });
     return;

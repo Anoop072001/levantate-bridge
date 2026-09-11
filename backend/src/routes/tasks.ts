@@ -9,15 +9,7 @@ import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
 import { enrichAllTasks, enrichTaskWithActivity } from "../chain/task-view.js";
 import { requireEnv } from "../env.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
-import {
-  approveWork,
-  cancelTask,
-  postTask,
-  reclaimTask,
-  rejectWork,
-  selectWinner,
-  type OpFailure,
-} from "../agent/operations.js";
+import type { OpFailure } from "../agent/operations.js";
 import {
   deleteLinkedWallet,
   findLinkedWallet,
@@ -102,6 +94,7 @@ export async function handleTasksRoute(
       return true;
     }
 
+    const { postTask } = await import("../agent/operations.js");
     const result = await postTask({
       description: input.description,
       bidDeadlineSeconds: input.bidDeadlineSeconds,
@@ -381,6 +374,7 @@ export async function handleTasksRoute(
       return true;
     }
 
+    const { selectWinner } = await import("../agent/operations.js");
     const result = await selectWinner(taskId, input.bidId);
     if (!result.ok) {
       respondFailure(json, result);
@@ -392,6 +386,7 @@ export async function handleTasksRoute(
 
   const approveMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/approve$/);
   if (req.method === "POST" && approveMatch) {
+    const { approveWork } = await import("../agent/operations.js");
     const result = await approveWork(Number(approveMatch[1]));
     if (!result.ok) {
       respondFailure(json, result);
@@ -403,6 +398,7 @@ export async function handleTasksRoute(
 
   const rejectMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/reject$/);
   if (req.method === "POST" && rejectMatch) {
+    const { rejectWork } = await import("../agent/operations.js");
     const result = await rejectWork(Number(rejectMatch[1]));
     if (!result.ok) {
       respondFailure(json, result);
@@ -421,6 +417,7 @@ export async function handleTasksRoute(
       return true;
     }
 
+    const { reclaimTask } = await import("../agent/operations.js");
     const result = await reclaimTask(taskId, input.newBidDeadlineSeconds);
     if (!result.ok) {
       respondFailure(json, result);
@@ -432,6 +429,7 @@ export async function handleTasksRoute(
 
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/cancel$/);
   if (req.method === "POST" && cancelMatch) {
+    const { cancelTask } = await import("../agent/operations.js");
     const result = await cancelTask(Number(cancelMatch[1]));
     if (!result.ok) {
       respondFailure(json, result);

@@ -71,10 +71,13 @@ If you are upgrading from the old JSON file store, import it once with `npm run 
 ```bash
 cd backend
 npm install
-npm run dev
+npm run dev          # local — tsx + hot reload
+npm run build && npm start   # production — compiled JS (~100 MiB idle)
 ```
 
 Listens on `http://localhost:3001`. Starts the agent loop (every 30s) and reconciles any stuck relay rows via Arc RPC receipts on startup.
+
+**Heroku:** set the app root to `backend/`, or deploy the `backend` subdirectory. The `Procfile` runs compiled output (`npm run build` via `heroku-postbuild`). Set all keys from `.env.example` as Heroku Config Vars. Optional: `AGENT_WINNER_LOOP=false` if you assign winners manually. Memory is capped with `NODE_OPTIONS=--max-old-space-size=192` in the start script.
 
 Health check: `GET http://localhost:3001/health`
 

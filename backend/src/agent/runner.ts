@@ -9,10 +9,7 @@ import {
   type BidRecord,
   type RelayedTransaction,
 } from "../store.js";
-import { deriveTaskParams } from "./budget.js";
-import { approveWork, rejectWork, selectWinner } from "./operations.js";
 import { isProofEvaluationAvailable } from "./proof-evaluator.js";
-import { scoreBids } from "./score-bids.js";
 
 export interface AgentAction {
   kind: "select_winner" | "approve_work" | "reject_work";
@@ -28,6 +25,7 @@ export interface AgentRunResult {
 }
 
 async function assignWinner(taskId: number): Promise<AgentAction> {
+  const { selectWinner } = await import("./operations.js");
   const result = await selectWinner(taskId);
   if (!result.ok) {
     return {
@@ -80,6 +78,7 @@ async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
   );
 
   const kind = verdict.approved ? "approve_work" : "reject_work";
+  const { approveWork, rejectWork } = await import("./operations.js");
   const result = verdict.approved ? await approveWork(taskId) : await rejectWork(taskId);
 
   return {
@@ -191,5 +190,4 @@ export async function runAgentCycle(): Promise<AgentRunResult> {
   return { actions, timestamp: new Date().toISOString() };
 }
 
-export { deriveTaskParams, scoreBids };
 export type { BidRecord };

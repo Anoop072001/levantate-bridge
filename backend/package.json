@@ -10,7 +10,9 @@
     "setup-relayer-wallet": "tsx scripts/setup-relayer-wallet.ts",
     "verify-usdc-transfer": "tsx scripts/verify-usdc-transfer.ts",
     "dev": "tsx src/server.ts",
-    "start": "tsx src/server.ts",
+    "build": "tsc",
+    "start": "node --max-old-space-size=192 dist/src/server.js",
+    "heroku-postbuild": "npm run build",
     "migrate-db-json": "tsx scripts/migrate-db-json-to-supabase.ts",
     "apply-pending-signals": "tsx scripts/apply-pending-signals.ts",
     "apply-agent-chats": "tsx scripts/apply-agent-chats.ts",
@@ -30,12 +32,12 @@
     "mammoth": "1.12.0",
     "openai": "7.10.0",
     "pdf-parse": "2.4.5",
-    "tsx": "4.19.2",
     "viem": "2.56.0",
     "zod": "4.6.0"
   },
   "devDependencies": {
     "@types/node": "22.10.2",
+    "tsx": "4.19.2",
     "typescript": "5.9.2"
   }
 }
