@@ -2,7 +2,7 @@
 
 import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ARC_EXPLORER, fetchRelayedTransaction } from "@/lib/api";
+import { ARC_EXPLORER, fetchRelayedTransaction, usdcMicroToDisplay } from "@/lib/api";
 import type { RelayedTransaction } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -46,20 +46,38 @@ export function PendingTransaction({
     };
   }, [tx.transactionId, tx.status, onSettled]);
 
+  const bidAmountLabel =
+    tx.kind === "place_bid" && tx.amount ? `${usdcMicroToDisplay(tx.amount)} USDC` : null;
+
   return (
     <div className={cn("rounded-2xl border border-border bg-card p-4 text-sm", className)}>
-      <p>
-        <strong className="capitalize">{tx.kind.replace(/_/g, " ")}</strong> —{" "}
-        <span
-          className={cn(
-            tx.status === "confirmed" && "text-emerald-700",
-            tx.status === "failed" && "text-red-700",
-            tx.status !== "confirmed" && tx.status !== "failed" && "text-muted-foreground",
-          )}
-        >
-          {tx.status}
-        </span>
-      </p>
+      {bidAmountLabel ? (
+        <p>
+          <strong>Your bid:</strong> {bidAmountLabel}{" "}
+          <span
+            className={cn(
+              tx.status === "confirmed" && "text-emerald-700",
+              tx.status === "failed" && "text-red-700",
+              tx.status !== "confirmed" && tx.status !== "failed" && "text-muted-foreground",
+            )}
+          >
+            ({tx.status})
+          </span>
+        </p>
+      ) : (
+        <p>
+          <strong className="capitalize">{tx.kind.replace(/_/g, " ")}</strong> —{" "}
+          <span
+            className={cn(
+              tx.status === "confirmed" && "text-emerald-700",
+              tx.status === "failed" && "text-red-700",
+              tx.status !== "confirmed" && tx.status !== "failed" && "text-muted-foreground",
+            )}
+          >
+            {tx.status}
+          </span>
+        </p>
+      )}
       {tx.txHash && (
         <p className="mt-2">
           <a
@@ -80,7 +98,9 @@ export function PendingTransaction({
         </p>
       )}
       {tx.status === "confirmed" && (
-        <p className="mt-2 text-emerald-700">Confirmed on-chain.</p>
+        <p className="mt-2 text-emerald-700">
+          {bidAmountLabel ? "Bid confirmed on-chain." : "Confirmed on-chain."}
+        </p>
       )}
       {tx.status === "failed" && (
         <p className="mt-2 text-red-700">

@@ -28,6 +28,9 @@ export interface RelayedTransaction {
   taskId: number | null;
   error: string | null;
   updatedAt: string;
+  /** Micro-USDC string — present on place_bid responses. */
+  amount?: string;
+  bidId?: number;
 }
 
 export interface WorkerSession {

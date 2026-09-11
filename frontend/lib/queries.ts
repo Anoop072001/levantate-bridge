@@ -48,12 +48,18 @@ export function useTaskQuery(taskId: number) {
   });
 }
 
-export function useBidsQuery(taskId: number, round?: number, enabled = true) {
+export function useBidsQuery(
+  taskId: number,
+  round?: number,
+  enabled = true,
+  pollWhileOpen = false,
+) {
   return useQuery({
     queryKey: queryKeys.bids(taskId, round),
     queryFn: () => fetchBids(taskId, round),
     enabled: enabled && Number.isFinite(taskId) && taskId >= 0,
     staleTime: LIST_STALE_MS,
+    refetchInterval: pollWhileOpen ? SELECTING_POLL_MS : false,
   });
 }
 

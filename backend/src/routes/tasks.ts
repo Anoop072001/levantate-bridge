@@ -297,6 +297,8 @@ export async function handleTasksRoute(
       ...pendingHandle(tx),
       nullifierHash: proof.nullifierHash,
       walletAddress: worker.address,
+      bidId: Number(nextBidId),
+      amount: amountStr,
     });
     return true;
   }

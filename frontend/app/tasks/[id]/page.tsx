@@ -30,7 +30,8 @@ export default function TaskDetailPage() {
   const taskId = Number(params.id);
   const taskQuery = useTaskQuery(taskId);
   const task = taskQuery.data;
-  const bidsQuery = useBidsQuery(taskId, task?.round, Boolean(task));
+  const bidOpen = task ? isBiddingOpen(task) : false;
+  const bidsQuery = useBidsQuery(taskId, task?.round, Boolean(task), bidOpen);
   const bids = bidsQuery.data ?? [];
   const proofQuery = useTaskProofQuery(
     taskId,
@@ -86,7 +87,6 @@ export default function TaskDetailPage() {
       session.walletAddress.toLowerCase() !== registeredPayoutAddress.toLowerCase(),
   );
 
-  const bidOpen = task ? isBiddingOpen(task) : false;
   const agentSelecting = task ? isAgentSelectingTask(task) : false;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -197,9 +197,24 @@ export default function TaskDetailPage() {
         </p>
       )}
 
+      {myBids.length > 0 && (
+        <section className="mt-8 rounded-2xl border border-border bg-muted/40 px-4 py-4">
+          <h2 className="text-base font-semibold tracking-tight">Your bids this round</h2>
+          <ul className="mt-2 space-y-1 text-sm">
+            {myBids.map((bid) => (
+              <li key={bid.id}>
+                <strong>{usdcMicroToDisplay(bid.amount)} USDC</strong>
+                {" · "}
+                payout <code>{shortAddress(bid.workerAddress)}</code>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {bids.length > 0 && (
         <section className="mt-8">
-          <h2 className="text-base font-semibold tracking-tight">Bids this round ({bids.length})</h2>
+          <h2 className="text-base font-semibold tracking-tight">All bids this round ({bids.length})</h2>
           <div className="mt-2">
             {bids.map((bid, i) => {
               const mine =
@@ -234,7 +249,9 @@ export default function TaskDetailPage() {
 
       {bidOpen && myBids.length > 0 && (
         <p className="mt-6 text-sm text-foreground">
-          You already bid on this task. The agent picks a winner after the bid deadline closes.
+          You bid{" "}
+          {myBids.map((b) => `${usdcMicroToDisplay(b.amount)} USDC`).join(", ")} on this task. The
+          agent picks a winner after the bid deadline closes.
         </p>
       )}
 
