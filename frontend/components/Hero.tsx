@@ -3,19 +3,11 @@
 import { AnimatePresence, motion, type Variants } from "motion/react";
 import { ArrowRight, Coins, Hexagon, ScanFace, Waypoints, Banknote } from "lucide-react";
 import Link from "next/link";
-import { Brand } from "@/components/Brand";
-import { ConnectCta } from "@/components/ConnectCta";
+import { SiteNav } from "@/components/SiteNav";
 
 const title = "Human work. On-chain payout.";
 const subtitle =
   "Agents post tasks in USDC. You bid with a fresh Selfie Check, submit proof, and get paid on Arc — to a wallet you already control.";
-
-const navItems = [
-  { href: "/tasks", label: "Tasks" },
-  { href: "/agent", label: "Agent" },
-  { href: "/wallet", label: "Wallet" },
-  { href: "/verify?return=/tasks", label: "Link wallet" },
-];
 
 const sponsors = [
   { icon: Coins, name: "Circle", weight: "font-bold tracking-tighter" },
@@ -26,23 +18,6 @@ const sponsors = [
 ];
 
 export function Hero() {
-  const navContainerVariants: Variants = {
-    hidden: { opacity: 0 },
-    show: {
-      opacity: 1,
-      transition: { staggerChildren: 0.08, delayChildren: 0.1 },
-    },
-  };
-  const navItemVariants: Variants = {
-    hidden: { opacity: 0, y: -16, filter: "blur(6px)" },
-    show: {
-      opacity: 1,
-      y: 0,
-      filter: "blur(0px)",
-      transition: { type: "spring", damping: 22, stiffness: 120, mass: 0.8 },
-    },
-  };
-
   const titleWords = title.split(" ");
   const wordContainerVariants: Variants = {
     hidden: { opacity: 0 },
@@ -105,36 +80,14 @@ export function Hero() {
       </div>
 
       <div className="relative z-10 mx-auto flex h-full min-h-screen max-w-7xl flex-col px-6 py-8 md:px-12">
-        <AnimatePresence>
-          <motion.nav
-            variants={navContainerVariants}
-            initial="hidden"
-            animate="show"
-            className="flex items-center justify-between"
-          >
-            <motion.div variants={navItemVariants}>
-              <Brand />
-            </motion.div>
+        <div className="relative z-50">
+          <SiteNav variant="dark" />
+        </div>
 
-            <motion.div variants={navItemVariants} className="flex items-center gap-4 md:gap-10">
-              {navItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="text-sm font-medium text-white/70 transition-colors hover:text-white"
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </motion.div>
-
-            <motion.div variants={navItemVariants}>
-              <ConnectCta variant="dark" />
-            </motion.div>
-          </motion.nav>
-        </AnimatePresence>
-
-        <div className="mt-32 flex max-w-[42rem] flex-col gap-6 md:mt-40" style={{ perspective: "800px" }}>
+        <div
+          className="relative z-0 mt-32 flex max-w-[42rem] flex-col gap-6 md:mt-40"
+          style={{ perspective: "800px" }}
+        >
           <motion.h1
             variants={wordContainerVariants}
             initial="hidden"
