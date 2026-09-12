@@ -1,6 +1,14 @@
 # Levantate Bridge — architecture
 
-High-level system design with **sponsor-product labels** on each integration leg. Deep dives: [`graph.md`](graph.md), [`circle-arc.md`](circle-arc.md), [`world-selfie-check.md`](world-selfie-check.md). Requirements: [`spec.md`](spec.md). Ops rules: [`../AGENTS.md`](../AGENTS.md).
+High-level system design with **sponsor-product labels** on each integration leg.
+
+| Sponsor | Deep dive (code + snippets) |
+| -------- | --------------------------- |
+| **Circle + Arc** | [`circle-arc.md`](circle-arc.md) |
+| **World ID Selfie Check** | [`world-selfie-check.md`](world-selfie-check.md) |
+| **The Graph** | [`graph.md`](graph.md) |
+
+Requirements: [`spec.md`](spec.md). Ops rules: [`../AGENTS.md`](../AGENTS.md).
 
 ## System diagram
 
@@ -16,6 +24,7 @@ flowchart TB
     AW[Agent Circle Wallet<br/>funds escrow]
     RW[Relayer Circle Wallet<br/>submits placeBid / submitWork]
     ARC[(Arc testnet<br/>USDC escrow)]
+    RPC[Arc public RPC<br/>receipt confirmation]
   end
 
   WW[Worker's own wallet<br/>self-custodied · receives USDC]
@@ -39,6 +48,7 @@ flowchart TB
   RQ --> RW
   AW -->|"USDC lock / refund / payout"| ARC
   RW -->|"placeBid · submitWork (relayed)"| ARC
+  RQ --> RPC
 
   FE -->|"connect wallet + personal_sign challenge"| RP
   FE --> IDK
@@ -64,43 +74,58 @@ sequenceDiagram
   participant W as Worker (World ID + own wallet)
   participant B as Backend relayer
   participant G as The Graph subgraph
+  participant R as Arc RPC
 
   A->>E: postTask (locks maxBudget USDC)
   E-->>G: TaskPosted
   W->>B: connect wallet + sign ownership challenge
   W->>B: placeBid + fresh Selfie Check proof (signal-bound to task/round/amount)
   Note over B: First bid binds nullifier to payout address
-  B->>E: placeBid(worker, amount)
+  B->>E: placeBid(worker, amount) via Circle relayer
+  B->>R: waitForTransactionReceipt → confirmed
   E-->>G: BidPlaced
   A->>G: query worker stats + price history
   A->>E: selectWinner
   E-->>G: WorkerAssigned (submissionDeadline set)
   W->>B: submit proof text
   B->>E: submitWork(proofHash)
+  B->>R: receipt confirm
   E-->>G: WorkSubmitted
   B->>B: LLM proof evaluation (on submit)
   B->>E: approveWork
+  B->>R: receipt confirm
   E->>W: USDC winning bid
   E->>A: USDC refund (maxBudget − bid)
   E-->>G: PaymentReleased
 ```
 
+## Sponsor mapping + code entry points
+
+| Sponsor | Role in this repo | Primary files |
+| -------- | ----------------- | ------------- |
+| **Circle** | Developer-controlled **agent wallet** funds escrow; **relayer wallet** submits worker txs; workers never hold gas. Settlement on **Arc testnet** USDC (6-decimal ERC-20). | `backend/src/circle/client.ts`, `backend/src/relayer/submit.ts`, `backend/src/agent/operations.ts`, `contracts/src/TaskEscrow.sol` |
+| **World ID** | **Selfie Check** on **every bid** and **payout-address changes**. Backend signs `rp_context`, verifies at `developer.world.org`, spends each proof once (`spent_proofs`). One nullifier → one payout address. | `backend/src/world-id/verify.ts`, `backend/src/routes/tasks.ts`, `frontend/components/SelfieCheck.tsx`, `frontend/components/BidSheet.tsx` |
+| **The Graph** | Subgraph on **`arc-testnet`** indexes all eight escrow events. Agent queries live for budget + bid scoring. **Not** used for write confirmation. | `subgraph/src/task-escrow.ts`, `backend/src/subgraph/client.ts`, `backend/src/agent/budget.ts`, `backend/src/agent/score-bids.ts` |
+
+### Write confirmation vs indexing
+
+| Concern | Source of truth |
+| ------- | ---------------- |
+| Did `placeBid` / `approveWork` / … succeed? | **Arc RPC receipt** — `backend/src/chain/wait-receipt.ts`, polled via `GET /api/transactions/:id` |
+| What should the next task budget be? | **Subgraph** — median historical payouts |
+| Who should win the auction? | **Subgraph** — worker completion rate, missed deadlines, price history |
+
 ## Reclaim path (missed submission deadline)
 
 When an assigned worker passes `submissionDeadline` without submitting:
 
-1. Agent calls **`reclaimTask`** manually via `POST /api/tasks/:id/reclaim` (not automatic in the agent loop).
+1. Agent calls **`reclaimTask`** via `POST /api/tasks/:id/reclaim` (not automatic in the agent loop).
 2. Escrow stays locked at `maxBudget`; task returns to **Open** with `round` incremented.
 3. Defaulting worker is **barred** from re-bidding that task.
 4. Subgraph indexes **`TaskReclaimed`** → **`MissedDeadline`** reputation signal.
+5. Backend deletes `spent_proofs` rows for that `task_id` (new round requires fresh Selfie Checks).
 
-## Sponsor mapping
-
-| Sponsor | Role in this repo |
-| -------- | ----------------- |
-| **Circle** | Developer-controlled **agent wallet** funds escrow; **relayer wallet** submits worker txs so workers never hold gas; `approveWork` settles USDC to the worker's **self-custodied** address. All settlement on **Arc testnet** native USDC (6-decimal ERC-20). |
-| **World ID** | **Selfie Check** gates **every bid** and **payout-address changes**. Backend signs **`rp_context`**, verifies at `developer.world.org`, spends each proof once. One nullifier → one payout address at a time (rotatable with fresh Selfie Check). |
-| **The Graph** | Subgraph on **`arc-testnet`** indexes all eight escrow events. Agent queries live for budget + bid scoring. Relayed writes are confirmed via Arc RPC receipts, not subgraph indexing lag. |
+Implementation: `backend/src/agent/operations.ts` → `reclaimTask`, `subgraph/src/task-escrow.ts` → `handleTaskReclaimed`.
 
 ## Repo layout
 
@@ -110,7 +135,7 @@ When an assigned worker passes `submissionDeadline` without submitting:
 | `backend/` | Marketplace API, Circle + World ID + agent logic, relayer queue, Supabase |
 | `frontend/` | Worker UI — tasks, Selfie Check, bid/submit, payout wallet |
 | `subgraph/` | Schema, mappings, Studio / Network deploy |
-| `docs/` | Spec, architecture, sponsor integration references |
+| `docs/` | Spec, architecture, per-sponsor integration references |
 
 ## Key API surfaces
 
@@ -125,13 +150,15 @@ When an assigned worker passes `submissionDeadline` without submitting:
 | `POST /api/worker/change-payout-wallet` | Worker | Updates payout address (Selfie Check + new wallet sign) |
 | `POST /api/tasks/:id/reclaim` | Agent | `reclaimTask` |
 | `POST /api/tasks/:id/cancel` | Agent | `cancelTask` or `abortTask` |
+| `POST /api/world-id/rp-signature` | Worker | Backend-signed `rp_context` for IDKit |
 | `POST /api/wallet/challenge` | Worker | Issues off-chain ownership message |
 | `POST /api/wallet/link` | Worker | Stores payout address until first bid |
 | `GET /api/workers/:address/balance` | Worker | Read USDC balance on Arc |
+| `GET /api/transactions/:id` | Any | Relayed tx status (Arc RPC–backed) |
 
-Every escrow write goes through `backend/src/agent/operations.ts` so task-state guards live in one place.
+Every agent escrow write goes through `backend/src/agent/operations.ts` so task-state guards live in one place.
 
-Escrow writes return a **pending handle** (`GET /api/transactions/:id`); treat success as confirmed only when the matching subgraph event is indexed.
+Escrow writes return a **pending handle** (`GET /api/transactions/:id`); treat success as **confirmed** only when status is `confirmed` (Arc RPC receipt success). Reverts → `failed`.
 
 **Custody:** Circle holds keys for **agent** and **relayer** only. Workers hold their own keys; a leaked backend credential cannot move worker earnings.
 
@@ -139,7 +166,7 @@ Escrow writes return a **pending handle** (`GET /api/transactions/:id`); treat s
 
 | Loop | Default | Behavior |
 | ---- | ------- | -------- |
-| Winner selection | **On** (`AGENT_WINNER_LOOP`) | Every 30s after bid deadline, pick winner |
+| Winner selection | **On** (`AGENT_WINNER_LOOP`) | Every 30s after bid deadline, pick winner using subgraph scores |
 | Proof review | **On submit** | LLM eval + approve/reject when worker submits proof |
 | Full agent cycle | Manual | `POST /api/agent/run-once` or agent chat |
 

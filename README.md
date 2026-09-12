@@ -4,18 +4,28 @@ An agent-to-human task marketplace with verified workers and on-chain settlement
 
 When an AI agent hits a task it can't complete alone, it posts it to a marketplace where verified humans bid to do it — and get paid in USDC on Arc the moment the work is approved.
 
-- Architecture and sponsor labels: [`docs/architecture.md`](docs/architecture.md)
+- Architecture overview: [`docs/architecture.md`](docs/architecture.md)
 - Full product spec: [`docs/spec.md`](docs/spec.md)
 - Build checklist: [`PLAN.md`](PLAN.md)
 - Operational rules: [`AGENTS.md`](AGENTS.md)
 
-## Sponsor products (observable in the demo)
+## Sponsor review guide
 
-| Sponsor | What you will see working |
-| -------- | ------------------------- |
-| **Circle** | Agent and relayer **Developer-Controlled Wallets** on Arc; escrow funded in USDC; autonomous `approveWork` payout to the worker's own address; workers never hold gas. |
-| **World ID** | **Selfie Check** (sandbox) on **every bid**, signal-bound to task/round/amount and spendable once; identity derived from the proof, not from the client; nullifier bound one-to-one to a self-custodied payout address. |
-| **The Graph** | Subgraph indexes all escrow events; agent sets budget and scores bids from **live** history; backend confirms relayed txs only after indexed events. |
+If you are evaluating a specific integration, start with its doc — each file lists **exact file paths and code snippets**.
+
+| Sponsor | Integration doc | What to look for in the demo |
+| -------- | ----------------- | ----------------------------- |
+| **Circle + Arc** | [`docs/circle-arc.md`](docs/circle-arc.md) | Agent and relayer **Developer-Controlled Wallets** on Arc; USDC escrow; `approveWork` pays the worker's **self-custodied** address; workers never hold gas; writes confirmed via **Arc RPC receipts**. |
+| **World ID** | [`docs/world-selfie-check.md`](docs/world-selfie-check.md) | **Selfie Check** (sandbox) on **every bid** and payout-wallet change; signal-bound to task/round/amount; identity from proof nullifier; one nullifier ↔ one payout address. |
+| **The Graph** | [`docs/graph.md`](docs/graph.md) | Subgraph on Arc testnet indexes all eight escrow events; agent **budget** and **bid scoring** query live history via the Network gateway. |
+
+### Where each integration lives in the repo
+
+| Sponsor | Contracts / indexer | Backend | Frontend |
+| -------- | ------------------- | ------- | -------- |
+| **Circle + Arc** | `contracts/src/TaskEscrow.sol` | `backend/src/circle/`, `backend/src/relayer/`, `backend/src/chain/`, `backend/src/agent/operations.ts` | `frontend/lib/wagmi.ts`, `frontend/components/PendingTransaction.tsx` |
+| **World ID** | — | `backend/src/world-id/`, `backend/src/routes/tasks.ts`, `backend/src/routes/worker.ts` | `frontend/components/SelfieCheck.tsx`, `frontend/components/BidSheet.tsx` |
+| **The Graph** | `subgraph/` (`schema.graphql`, `src/task-escrow.ts`) | `backend/src/subgraph/client.ts`, `backend/src/agent/budget.ts`, `backend/src/agent/score-bids.ts` | — (agent/backend only) |
 
 ## Prerequisites
 
@@ -216,5 +226,11 @@ Those runs predate three changes that still need a re-verification pass: self-cu
 
 ## Docs
 
-- [`docs/selfie-check-feedback.md`](docs/selfie-check-feedback.md) — integration notes and friction log
-- [`docs/architecture.md`](docs/architecture.md) — diagram and sponsor mapping
+| Doc | Contents |
+| --- | -------- |
+| [`docs/architecture.md`](docs/architecture.md) | System diagram, flow sequences, sponsor mapping, API surface |
+| [`docs/circle-arc.md`](docs/circle-arc.md) | Circle SDK, relayer queue, Arc RPC confirmation, escrow contract |
+| [`docs/world-selfie-check.md`](docs/world-selfie-check.md) | IDKit, RP signature, verify/spend, bid and payout-wallet gates |
+| [`docs/graph.md`](docs/graph.md) | Subgraph manifest, mappings, agent budget + bid scoring queries |
+| [`docs/spec.md`](docs/spec.md) | Full product specification |
+| [`docs/selfie-check-feedback.md`](docs/selfie-check-feedback.md) | Selfie Check Beta friction log for TFH |

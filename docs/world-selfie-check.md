@@ -2,65 +2,132 @@
 
 Selfie Check gates **economic participation**: every bid and every payout-address change requires a fresh proof. Identity comes from the proof’s **nullifier hash**, never from client-supplied values.
 
+**Start here if you are reviewing World ID / Selfie Check integration.**
+
 ## What it does here
 
-| Moment | Selfie Check signal |
-| ------ | ------------------- |
-| **Place bid** | `bid:{taskId}:{round}:{amountMicro}` |
-| **Change payout wallet** | `change-payout:{newAddressLowercase}` |
+| Moment | Signal format | Entry point |
+| ------ | ------------- | ----------- |
+| **Place bid** | `bid:{taskId}:{round}:{amountMicro}` | `POST /api/tasks/:id/bids` |
+| **Change payout wallet** | `change-payout:{newAddressLowercase}` | `POST /api/worker/change-payout-wallet` |
 
-First successful bid binds **nullifier → payout address** in Supabase. Registered workers can later rotate payout address with a fresh Selfie Check + new wallet signature (`POST /api/worker/change-payout-wallet`).
+First successful bid binds **nullifier → payout address** in Supabase (`workers` table). Registered workers rotate payout with a fresh Selfie Check + new wallet signature.
 
-## Code files
+## Verification pipeline (backend)
 
-### Backend — verification
+`backend/src/world-id/verify.ts` — full server-side path:
+
+```typescript
+export async function verifySelfieCheck(input: ProofSubmission): Promise<ProofOutcome> {
+  const signalOk = await consumeExpectedSignal(input.signalToken, input.signal);
+  if (!signalOk) return { ok: false, status: 400, error: "Signal mismatch or expired verification session" };
+
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify(input.idkitResponse))
+    .digest("hex");
+
+  const res = await fetch(`${WORLD_VERIFY_BASE}/${input.rpId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input.idkitResponse),
+  });
+  // … extract nullifier, then:
+  const spent = await trySpendProof(fingerprint, nullifierHash, input.taskId);
+  if (!spent) return { ok: false, status: 409, error: "This Selfie Check proof has already been used" };
+
+  return { ok: true, nullifierHash };
+}
+```
+
+Supporting modules:
 
 | File | Role |
 | ---- | ---- |
-| `backend/src/world-id/verify.ts` | `POST developer.world.org/api/v4/verify/{rp_id}`, proof spend |
-| `backend/src/world-id/signals.ts` | RP signal tokens, TTL, pending-signal store |
+| `backend/src/world-id/signals.ts` | RP signal tokens, 20 min TTL, `pending_signals` store |
 | `backend/src/world-id/nullifier.ts` | Extract nullifier from IDKit response |
+| `backend/src/world-id/spent-proofs-cleanup.ts` | Delete bid fingerprints when task paid/cancelled/reclaimed |
 | `backend/src/server.ts` | `GET /api/world-id/config`, `POST /api/world-id/rp-signature` |
-| `backend/src/routes/tasks.ts` | Bid route — verify proof, bind/register worker |
-| `backend/src/routes/worker.ts` | `changePayoutSignal`, `POST /api/worker/change-payout-wallet` |
-| `backend/src/wallet/challenge.ts` | Off-chain ownership challenge (before Selfie Check on first bid) |
-| `backend/src/store.ts` | `workers`, `linked_wallets`, `spent_proofs`, `updateWorkerAddress` |
-| `backend/scripts/apply-pending-signals.ts` | Apply `pending_signals` migration helper |
 
-### Frontend — IDKit
+### Bid route (verify → bind → relay)
 
-| File | Role |
-| ---- | ---- |
-| `frontend/components/SelfieCheck.tsx` | IDKit widget, fetches RP signature, runs verification |
-| `frontend/lib/world-id-preset.ts` | `selfieCheckLegacy()` preset config |
-| `frontend/lib/bid-signal.ts` | Bid signal string (must match backend) |
-| `frontend/lib/change-payout-signal.ts` | Change-payout signal (must match backend) |
-| `frontend/components/BidSheet.tsx` | Bid flow — wallet link then Selfie Check |
-| `frontend/components/ChangePayoutWallet.tsx` | Registered worker payout rotation |
-| `frontend/components/LinkWalletButton.tsx` | Connect + sign wallet ownership |
-| `frontend/lib/link-wallet.ts` | Challenge/sign/link API client |
-| `frontend/app/verify/page.tsx` | Standalone link payout wallet page |
-| `frontend/lib/payout-session.ts` | Session readiness / stale payout detection |
-| `frontend/lib/worker-session.ts` | localStorage worker session |
+`backend/src/routes/tasks.ts` — signal must match task/round/amount before World verify:
 
-### Database
+```typescript
+const expectedSignal = bidSignal(taskId, onChain.round, amountStr);
+if (input.signal !== expectedSignal) {
+  json(400, { error: "Selfie Check proof was issued for a different task, round, or amount" });
+  return true;
+}
 
-| File | Role |
-| ---- | ---- |
-| `backend/supabase/schema.sql` | `workers`, `linked_wallets`, `spent_proofs`, `pending_signals` |
+const proof = await verifySelfieCheck({
+  rpId: input.rp_id ?? requireEnv("WORLD_RP_ID"),
+  idkitResponse: input.idkitResponse,
+  signal: input.signal,
+  signalToken: input.signal_token,
+  taskId,
+});
+// nullifier read from proof — never from client
+```
 
-### Other
+Signal helper (must match frontend): `frontend/lib/bid-signal.ts` / `backend/src/routes/tasks.ts` → `bidSignal`.
 
-| File | Role |
-| ---- | ---- |
-| `docs/selfie-check-feedback.md` | Beta access / product feedback notes for TFH |
+### Proof spend + cleanup
 
-## Key env vars
+`backend/src/store.ts` — `trySpendProof(fingerprint, nullifierHash, taskId?)` inserts into `spent_proofs`. Bid rows include `task_id`; change-payout rows leave it null.
 
-- `WORLD_APP_ID`, `WORLD_RP_ID` — public IDKit config
-- `WORLD_SIGNING_KEY` — server-only RP signature (never client)
-- `WORLD_ID_ACTION` — action string signed into `rp_context`
-- `NEXT_PUBLIC_WORLD_APP_ID`, `NEXT_PUBLIC_WORLD_RP_ID` — frontend mirror
+Cleanup after confirmed on-chain pay/cancel/reclaim — `backend/src/world-id/spent-proofs-cleanup.ts`:
+
+```typescript
+const CLEANUP_ON_CONFIRMED = new Set(["approve_work", "cancel_task", "abort_task", "reclaim_task"]);
+
+export async function maybeDeleteSpentProofsForTask(kind: string, taskId: number | undefined) {
+  if (taskId === undefined || !CLEANUP_ON_CONFIRMED.has(kind)) return;
+  await deleteSpentProofsForTask(taskId);
+}
+```
+
+Called from `backend/src/relayer/submit.ts` and `backend/src/relayer/reconcile.ts` after Arc RPC confirms.
+
+### Change payout wallet
+
+`backend/src/routes/worker.ts` — `changePayoutSignal(address)` + `verifySelfieCheck` (no `taskId`).
+
+### Wallet ownership (before first bid)
+
+Off-chain challenge — not World ID:
+
+- `backend/src/wallet/challenge.ts`, `backend/src/routes/wallet.ts`
+- `frontend/lib/link-wallet.ts`, `frontend/components/LinkWalletButton.tsx`
+
+## Frontend (IDKit)
+
+`frontend/components/SelfieCheck.tsx` — fetches backend-signed `rp_context`, runs IDKit:
+
+```typescript
+/**
+ * Runs one Selfie Check bound to `signal`. Each press produces a fresh proof: the backend
+ * spends it once, so a verification cannot be replayed across bids.
+ */
+export function SelfieCheckButton({ signal, onVerified, ... }) {
+  // POST /api/world-id/rp-signature { signal } → rp_context + signal_token
+  // IDKitRequestWidget with verificationPreset (selfieCheckLegacy)
+}
+```
+
+Bid UX: `frontend/components/BidSheet.tsx` — wallet link → amount → Selfie Check → `placeBid`.
+
+Preset: `frontend/lib/world-id-preset.ts` (`selfieCheckLegacy()`, sandbox).
+
+## Database
+
+| Table | Role |
+| ----- | ---- |
+| `workers` | `nullifier_hash` ↔ payout `address` (one-to-one) |
+| `linked_wallets` | Pre-bid wallet link until first Selfie Check bid |
+| `spent_proofs` | `fingerprint` (SHA-256 of IDKit JSON), optional `task_id` for bids |
+| `pending_signals` | One-time signal token until verify or TTL |
+
+Schema: `backend/supabase/schema.sql`. Migration for `task_id`: `backend/supabase/schema-add-spent-proofs-task-id.sql`.
 
 ## Flow summary
 
@@ -69,4 +136,14 @@ First successful bid binds **nullifier → payout address** in Supabase. Registe
 3. First bid inserts `workers(nullifier_hash, address)`.
 4. To change payout: sign **new** wallet → Selfie Check with `change-payout:0x…` → `updateWorkerAddress`.
 
-See [`AGENTS.md`](../AGENTS.md) for sandbox vs staging, `allow_legacy_proofs`, and access-gate notes.
+## Key env vars
+
+- `WORLD_APP_ID`, `WORLD_RP_ID` — public IDKit config
+- `WORLD_SIGNING_KEY` — server-only RP signature (never client)
+- `WORLD_ID_ACTION` — action string signed into `rp_context`
+- `NEXT_PUBLIC_WORLD_APP_ID`, `NEXT_PUBLIC_WORLD_RP_ID` — frontend mirror
+
+## Other docs
+
+- [`docs/selfie-check-feedback.md`](selfie-check-feedback.md) — Beta access / product feedback for TFH
+- [`AGENTS.md`](../AGENTS.md) — sandbox vs staging, `allow_legacy_proofs`, access-gate notes

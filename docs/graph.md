@@ -1,48 +1,102 @@
 # The Graph — integration reference
 
-Levantate Bridge indexes every escrow state transition on **Arc testnet** and queries that data live for agent budgeting and bid scoring. Confirmation of relayed writes is driven by indexed events (see [`architecture.md`](architecture.md)).
+Levantate Bridge indexes every escrow state transition on **Arc testnet** and queries that data live for **agent budgeting** and **bid scoring**.
+
+**Start here if you are reviewing The Graph integration.**
+
+> **Not used for write confirmation.** Relayed txs are confirmed via **Arc RPC receipts** (`backend/src/chain/wait-receipt.ts`). The subgraph supplies historical signals only; indexing lag does not gate payouts.
 
 ## What it does here
 
-| Use | How |
-| --- | --- |
-| **Budget derivation** | Median historical payout and submission window before `postTask` |
-| **Bid scoring** | Worker completion rate, missed deadlines, price vs historical median |
-| **Confirmation** | Relayed txs stay pending until the matching escrow event appears in the index |
+| Use | Where in code | GraphQL source |
+| --- | ------------- | -------------- |
+| **Budget derivation** | `backend/src/agent/budget.ts` | Median paid amount + submission window from `Payment` entities |
+| **Bid scoring** | `backend/src/agent/score-bids.ts` | Worker `completionRate`, `missedDeadlines`, historical price median |
+| **Winner loop** | `backend/src/agent/runner.ts`, `operations.ts` | Calls `scoreBids` after bid deadline |
+| **Agent tools / API** | `backend/src/agent/tools.ts`, `routes/agent.ts` | `score_bids`, `GET /api/agent/budget` |
 
 **Query endpoint:** Graph Network gateway (`GRAPH_QUERY_API_KEY` + `GRAPH_SUBGRAPH_ID`), not the Studio dev URL.
 
-## Code files
+## Subgraph (indexer)
 
-### Subgraph (indexer)
+Manifest — `subgraph/subgraph.yaml` (network `arc-testnet`, all eight handlers):
 
-| File | Role |
-| ---- | ---- |
-| `subgraph/schema.graphql` | Entity schema (`Task`, `Bid`, `Worker`, `Payment`, …) |
-| `subgraph/subgraph.yaml` | Manifest — contract address, network `arc-testnet`, event handlers |
-| `subgraph/src/task-escrow.ts` | AssemblyScript mappings for all eight escrow events |
-| `subgraph/abis/TaskEscrow.json` | ABI copied from contracts build |
-| `subgraph/package.json` | `graph codegen`, `graph deploy` scripts |
+```yaml
+network: arc-testnet
+source:
+  address: "0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52"
+  startBlock: 61231705
+eventHandlers:
+  - event: TaskPosted(...)
+    handler: handleTaskPosted
+  - event: BidPlaced(...)
+    handler: handleBidPlaced
+  # … WorkerAssigned, WorkSubmitted, WorkRejected, PaymentReleased, TaskReclaimed, TaskCancelled
+```
 
-### Backend (query client + agent)
+Mappings — `subgraph/src/task-escrow.ts` — example worker stats on assign:
 
-| File | Role |
-| ---- | ---- |
-| `backend/src/subgraph/client.ts` | Gateway GraphQL client (Bearer auth, retries, rate-limit cooldown) |
-| `backend/src/agent/queries.ts` | `fetchHistoricalPayments`, `fetchWorkerStatsBatch`, median helpers |
-| `backend/src/agent/budget.ts` | Derives `maxBudget` / `submissionWindow` from subgraph medians |
-| `backend/src/agent/score-bids.ts` | Scores bids using worker stats + payment history |
-| `backend/src/agent/runner.ts` | Calls scoring during winner selection |
-| `backend/src/agent/operations.ts` | Invokes scoring inside `selectWinner` |
-| `backend/src/agent/tools.ts` | MCP/chat `score_bids` tool |
-| `backend/src/routes/agent.ts` | `GET /api/agent/budget`, `GET /api/agent/tasks/:id/score-bids` |
-| `backend/scripts/test-agent-budget.ts` | Smoke test for budget derivation |
+```typescript
+export function handleWorkerAssigned(event: WorkerAssignedEvent): void {
+  recordEscrowEvent("WorkerAssigned", event.params.taskId, event);
+  const worker = loadOrCreateWorker(event.params.worker);
+  worker.tasksAssigned = worker.tasksAssigned + 1;
+  worker.completionRate = completionRate(worker.tasksAssigned, worker.tasksPaid);
+  worker.save();
+}
+```
 
-### Environment
+Schema entities: `subgraph/schema.graphql` — `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline`, `EscrowEvent`.
 
-| File | Role |
-| ---- | ---- |
-| `.env.example` | `GRAPH_QUERY_API_KEY`, `GRAPH_SUBGRAPH_ID`, `GRAPH_AUTH_DEPLOY_KEY` |
+Deploy: `subgraph/package.json` → `npm run codegen`, `graph auth`, `npm run deploy`.
+
+## Backend GraphQL client
+
+Gateway URL + Bearer auth — `backend/src/subgraph/client.ts`:
+
+```typescript
+const subgraphId = process.env.GRAPH_SUBGRAPH_ID?.trim() || DEFAULT_SUBGRAPH_ID;
+return {
+  url: `https://gateway.thegraph.com/api/subgraphs/id/${subgraphId}`,
+  apiKey,
+};
+```
+
+Queries live in `backend/src/agent/queries.ts`:
+
+- `fetchHistoricalPayments()` — paid task amounts for median budget
+- `fetchWorkerStatsBatch(addresses)` — completion rate, missed deadlines per worker
+
+## Agent uses subgraph data
+
+Budget before `postTask` — `backend/src/agent/budget.ts`:
+
+```typescript
+export async function deriveTaskParams(): Promise<AgentTaskParams> {
+  const payments = await fetchHistoricalPayments();
+  const medianPaid = medianPaidFromPayments(payments);
+  const medianWindow = medianSubmissionWindowFromPayments(payments);
+  return {
+    maxBudget: medianPaid ?? DEFAULT_BUDGET,
+    submissionWindow: medianWindow ?? DEFAULT_SUBMISSION_WINDOW,
+    reasoning: { /* median values or defaults */ },
+  };
+}
+```
+
+Bid scoring — `backend/src/agent/score-bids.ts`:
+
+```typescript
+export async function scoreBids(bids: BidRecord[], maxBudget: bigint): Promise<BidSelectionResult> {
+  const payments = subgraphUp ? await fetchHistoricalPayments() : [];
+  const workerStats = subgraphUp ? await fetchWorkerStatsBatch(eligible.map((b) => b.workerAddress)) : [];
+  // priceScore, completionScore, missedDeadlinePenalty → totalScore → winner
+}
+```
+
+Winner selection invokes scoring in `backend/src/agent/operations.ts` → `selectWinner`.
+
+Smoke test: `backend/scripts/test-agent-budget.ts`.
 
 ## Key env vars
 

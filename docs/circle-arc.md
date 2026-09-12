@@ -2,68 +2,140 @@
 
 All settlement is **USDC on Arc testnet** via Circle **Developer-Controlled Wallets**. The backend holds two wallets only: the **agent** (funds escrow) and the **relayer** (submits worker transactions so workers never need gas).
 
+**Start here if you are reviewing Circle / Arc integration.**
+
 ## What it does here
 
-| Wallet | Role |
-| ------ | ---- |
-| **Agent wallet** | `postTask`, `selectWinner`, `approveWork`, `rejectWork`, `reclaimTask`, `cancelTask` |
-| **Relayer wallet** | `placeBid`, `submitWork` on behalf of workers |
+| Wallet | Role | On-chain calls |
+| ------ | ---- | -------------- |
+| **Agent wallet** | Funds escrow, settles tasks | `postTask`, `selectWinner`, `approveWork`, `rejectWork`, `reclaimTask`, `cancelTask` / `abortTask`, USDC `approve` |
+| **Relayer wallet** | Gasless worker writes | `placeBid`, `submitWork` |
 
 Workers receive USDC directly at their **self-custodied** payout address on `approveWork` → `PaymentReleased`.
 
-## Code files
+**Write confirmation:** Circle returns a tx hash → backend waits for an **Arc RPC receipt** (`status = success` → confirmed, revert → failed). See `backend/src/chain/wait-receipt.ts`.
 
-### Contracts (Arc testnet)
+## Code map (by layer)
+
+### Circle SDK client
+
+`backend/src/circle/client.ts` — singleton Developer-Controlled Wallets client:
+
+```typescript
+export function createCircleClient() {
+  return initiateDeveloperControlledWalletsClient({
+    apiKey: requireEnv("CIRCLE_API_KEY"),
+    entitySecret: requireEnv("CIRCLE_ENTITY_SECRET"),
+  });
+}
+```
+
+Wallet setup scripts: `backend/scripts/setup-wallets.ts`, `backend/scripts/setup-relayer-wallet.ts`.
+
+### Contract execution + receipt wait
+
+`backend/src/relayer/submit.ts` — every on-chain write goes through Circle, then Arc RPC:
+
+```typescript
+response = await client.createContractExecutionTransaction({
+  walletId: input.walletId,
+  contractAddress: input.contractAddress,
+  abiFunctionSignature: input.abiFunctionSignature,
+  abiParameters: input.abiParameters,
+  idempotencyKey,
+  fee: { type: "level", config: { feeLevel: "LOW" } },
+});
+// … wait for Circle hash, then:
+const outcome = await waitForArcReceipt(txHash);
+```
+
+Serialized nonces per wallet: `backend/src/relayer/queue.ts` (`enqueueContractCall`).
+
+Arc receipt helper:
+
+```typescript
+// backend/src/chain/wait-receipt.ts
+export async function waitForArcReceipt(txHash: string): Promise<"confirmed" | "failed"> {
+  const receipt = await client.waitForTransactionReceipt({
+    hash: txHash as `0x${string}`,
+    timeout: RECEIPT_TIMEOUT_MS,
+    confirmations: 1,
+  });
+  return receipt.status === "success" ? "confirmed" : "failed";
+}
+```
+
+Startup recovery for stuck rows: `backend/src/relayer/reconcile.ts`.
+
+### Agent escrow writes (Circle agent wallet)
+
+`backend/src/agent/operations.ts` — post task, select winner, approve/reject, reclaim, cancel:
+
+```typescript
+const postTx = await enqueueContractCall({
+  walletId: agentWalletId,
+  kind: "post_task",
+  expectedEvent: "TaskPosted",
+  contractAddress: escrowAddress,
+  abiFunctionSignature: "postTask(string,uint256,uint256,uint256)",
+  abiParameters: [description, maxBudget.toString(), bidDeadline.toString(), submissionWindow.toString()],
+  taskId,
+  round: 0,
+});
+```
+
+Funding check before post: `backend/src/chain/agent-wallet.ts` (`checkAgentFunding`).
+
+### Worker relay writes (Circle relayer wallet)
+
+Bid relay — `backend/src/routes/tasks.ts`:
+
+```typescript
+const tx = await enqueueContractCall({
+  walletId: relayerWalletId,
+  kind: "place_bid",
+  expectedEvent: "BidPlaced",
+  contractAddress: escrowAddress,
+  abiFunctionSignature: "placeBid(uint256,address,uint256)",
+  abiParameters: [taskId, worker.address, BigInt(input.amount).toString()],
+  taskId,
+  round: onChain.round,
+  worker: worker.address,
+});
+```
+
+Work submission relay: `backend/src/proof/submit-work.ts` → `submitWork(uint256,bytes32)`.
+
+### Escrow contract (Arc testnet)
 
 | File | Role |
 | ---- | ---- |
-| `contracts/src/TaskEscrow.sol` | USDC escrow state machine |
+| `contracts/src/TaskEscrow.sol` | USDC escrow state machine, all eight events |
 | `contracts/test/TaskEscrow.t.sol` | Forge tests |
 | `contracts/script/DeployTaskEscrow.s.sol` | Deploy script |
 | `contracts/script/deploy.sh` | Arc deploy wrapper |
+| `contracts/deployments/arc-testnet.json` | Deployed address + block |
 
-### Backend — Circle SDK
-
-| File | Role |
-| ---- | ---- |
-| `backend/src/circle/client.ts` | `initiateDeveloperControlledWalletsClient` singleton |
-| `backend/src/relayer/submit.ts` | `createContractExecutionTransaction`, nonce queue, Circle tx wait |
-| `backend/src/relayer/queue.ts` | Per-wallet serialized submission queue |
-| `backend/scripts/setup-wallets.ts` | Create wallet set + agent wallet |
-| `backend/scripts/setup-relayer-wallet.ts` | Create relayer wallet |
-| `backend/scripts/verify-usdc-transfer.ts` | Smoke test USDC move on Arc |
-
-### Backend — chain / RPC
+### Chain reads (viem + Arc RPC)
 
 | File | Role |
 | ---- | ---- |
-| `backend/src/chain/escrow.ts` | viem public client, escrow ABI reads, `fallback()` RPC transport |
+| `backend/src/chain/escrow.ts` | Public client, escrow ABI reads, fallback RPC transport |
 | `backend/src/chain/rpc-url.ts` | Default Arc RPC list + `ARC_RPC_URL` override |
-| `backend/src/chain/rpc-queue.ts` | Serialized RPC reads |
-| `backend/src/chain/task-state.ts` | On-chain task reads + cache |
-| `backend/src/chain/task-view.ts` | Merge DB tasks with live RPC state |
-| `backend/src/chain/usdc-balance.ts` | ERC-20 USDC balance reads (`0x3600…0000`) |
-| `backend/src/chain/agent-wallet.ts` | Agent wallet address resolution, USDC balance check before `postTask` |
-| `backend/src/agent/operations.ts` | All agent escrow writes enqueued through Circle |
-| `backend/src/routes/tasks.ts` | Worker bid/submit relay paths |
-| `backend/src/proof/submit-work.ts` | `submitWork` relay after proof upload |
+| `backend/src/chain/task-state.ts` | On-chain task reads + cache invalidation |
+| `backend/src/chain/task-view.ts` | Merge Supabase tasks with live RPC state |
+| `backend/src/chain/usdc-balance.ts` | ERC-20 USDC balance (`0x3600…0000`, 6 decimals) |
 
-### Frontend — Arc / wallets
+### Frontend (Arc + balance display)
 
 | File | Role |
 | ---- | ---- |
-| `frontend/lib/wagmi.ts` | RainbowKit + Arc testnet chain config |
-| `frontend/lib/arc-rpc.ts` | Frontend RPC fallback (mirrors backend) |
-| `frontend/next.config.ts` | Arc RPC env for client bundle |
-| `frontend/lib/api.ts` | `fetchWorkerBalance`, bid/submit API calls |
-| `frontend/components/PendingTransaction.tsx` | Polls relay tx status |
-| `frontend/lib/link-wallet.ts` | Off-chain `personal_sign` wallet ownership (not Circle) |
+| `frontend/lib/wagmi.ts` | RainbowKit + `arcTestnet` chain |
+| `frontend/lib/arc-rpc.ts` | Client RPC fallback |
+| `frontend/lib/api.ts` | `fetchWorkerBalance`, bid/submit API |
+| `frontend/components/PendingTransaction.tsx` | Polls `GET /api/transactions/:id` until confirmed/failed |
 
-### Environment
-
-| File | Role |
-| ---- | ---- |
-| `.env.example` | `CIRCLE_*`, `ESCROW_CONTRACT_ADDRESS`, `ARC_RPC_URL`, deployer keys |
+Workers connect their **own** wallet (not Circle): `frontend/lib/link-wallet.ts`, `frontend/components/LinkWalletButton.tsx`.
 
 ## Key env vars
 
@@ -77,5 +149,6 @@ Workers receive USDC directly at their **self-custodied** payout address on `app
 - Chain ID `5042002`, RPC `https://rpc.testnet.arc.io`
 - USDC ERC-20: `0x3600000000000000000000000000000000000000` (6 decimals for escrow amounts)
 - Native gas also USDC (18 decimals) — do not mix raw values
+- Explorer: [testnet.arcscan.app](https://testnet.arcscan.app)
 
 See [`AGENTS.md`](../AGENTS.md) for pinned SDK versions and nonce-queue rules.
