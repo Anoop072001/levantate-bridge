@@ -11,6 +11,8 @@ export interface ProofSubmission {
   idkitResponse: Record<string, unknown>;
   signal: string;
   signalToken: string;
+  /** Set when spending a bid proof so rows can be purged after task pay/cancel/reclaim. */
+  taskId?: number;
 }
 
 export type ProofOutcome =
@@ -71,7 +73,7 @@ export async function verifySelfieCheck(input: ProofSubmission): Promise<ProofOu
     return { ok: false, status: 400, error: "No nullifier in IDKit response" };
   }
 
-  const spent = await trySpendProof(fingerprint, nullifierHash);
+  const spent = await trySpendProof(fingerprint, nullifierHash, input.taskId);
   if (!spent) {
     logVerifyFailure("replay", {
       rp_id: input.rpId,

@@ -299,14 +299,23 @@ export async function consumePendingSignal(token: string, signal: string): Promi
 export async function trySpendProof(
   fingerprint: string,
   nullifierHash: string,
+  taskId?: number,
 ): Promise<boolean> {
-  const { error } = await getSupabase().from("spent_proofs").insert({
+  const row: { fingerprint: string; nullifier_hash: string; task_id?: number } = {
     fingerprint,
     nullifier_hash: nullifierHash,
-  });
+  };
+  if (taskId !== undefined) row.task_id = taskId;
+
+  const { error } = await getSupabase().from("spent_proofs").insert(row);
   if (!error) return true;
   if (error.code === "23505") return false;
   fail("trySpendProof", error);
+}
+
+export async function deleteSpentProofsForTask(taskId: number): Promise<void> {
+  const { error } = await getSupabase().from("spent_proofs").delete().eq("task_id", taskId);
+  if (error) fail("deleteSpentProofsForTask", error);
 }
 
 export async function upsertTask(record: TaskRecord): Promise<void> {

@@ -71,11 +71,16 @@ create table if not exists linked_wallets (
 );
 
 -- One Selfie Check proof authorizes exactly one bid (or other action).
+-- task_id is set for bids; null for change-payout. Rows for a task_id are deleted on
+-- pay, cancel/abort, or reclaim (see spent-proofs-cleanup.ts).
 create table if not exists spent_proofs (
   fingerprint    text        primary key,
   nullifier_hash text        not null,
+  task_id        bigint      references tasks (id),
   created_at     timestamptz not null default now()
 );
+
+create index if not exists spent_proofs_task_id_idx on spent_proofs (task_id);
 
 -- RP signature sessions: binds the Selfie Check signal until the proof is submitted or TTL.
 create table if not exists pending_signals (

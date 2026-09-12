@@ -1,6 +1,7 @@
 import { invalidateOnChainTaskCache } from "../chain/task-state.js";
 import { readArcReceiptOutcome } from "../chain/wait-receipt.js";
 import { listSubmittedRelayedTransactions, updateRelayedTransaction } from "../store.js";
+import { maybeDeleteSpentProofsForTask } from "../world-id/spent-proofs-cleanup.js";
 
 /** Marks stuck `submitted` rows confirmed/failed once Arc RPC has a receipt. */
 export async function reconcileSubmittedTransactions(): Promise<number> {
@@ -19,6 +20,9 @@ export async function reconcileSubmittedTransactions(): Promise<number> {
       });
       if (tx.taskId !== undefined) {
         invalidateOnChainTaskCache(tx.taskId);
+      }
+      if (outcome === "confirmed") {
+        await maybeDeleteSpentProofsForTask(tx.kind, tx.taskId);
       }
       updated++;
     } catch (err) {

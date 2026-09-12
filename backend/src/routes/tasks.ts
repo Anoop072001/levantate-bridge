@@ -200,6 +200,7 @@ export async function handleTasksRoute(
       idkitResponse: input.idkitResponse,
       signal: input.signal,
       signalToken: input.signal_token,
+      taskId,
     });
     if (!proof.ok) {
       json(proof.status, { error: proof.error, detail: proof.detail });

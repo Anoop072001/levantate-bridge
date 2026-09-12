@@ -8,6 +8,7 @@ import {
 } from "../store.js";
 import { invalidateOnChainTaskCache } from "../chain/task-state.js";
 import { waitForArcReceipt } from "../chain/wait-receipt.js";
+import { maybeDeleteSpentProofsForTask } from "../world-id/spent-proofs-cleanup.js";
 import { getWalletQueue } from "./queue.js";
 
 export interface ContractCallInput {
@@ -102,7 +103,12 @@ async function submitContractCall(input: ContractCallInput): Promise<RelayedTran
           error: "Transaction reverted on-chain",
         });
       }
-      return updateRelayedTransaction(pending.id, { txHash, status: "confirmed" });
+      const confirmed = await updateRelayedTransaction(pending.id, {
+        txHash,
+        status: "confirmed",
+      });
+      await maybeDeleteSpentProofsForTask(input.kind, input.taskId);
+      return confirmed;
     } catch (receiptErr) {
       console.warn(
         `[relayer] receipt wait incomplete for ${txHash}: ${
