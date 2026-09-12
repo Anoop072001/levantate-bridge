@@ -151,4 +151,14 @@ Workers connect their **own** wallet (not Circle): `frontend/lib/link-wallet.ts`
 - Native gas also USDC (18 decimals) — do not mix raw values
 - Explorer: [testnet.arcscan.app](https://testnet.arcscan.app)
 
+### Deployed addresses (this demo)
+
+| Role | Address |
+| ---- | ------- |
+| **TaskEscrow** | `0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52` |
+| **Agent wallet** | `0x42472b448b6ba8bb654483d4773db715901a64a7` |
+| **Relayer wallet** | `0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1` |
+
+Deploy block `61231705`. See [`contracts/deployments/arc-testnet.json`](../contracts/deployments/arc-testnet.json) and the README testnet table for Arcscan links.
+
 See [`AGENTS.md`](../AGENTS.md) for pinned SDK versions and nonce-queue rules.

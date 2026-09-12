@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Levantate Bridge">
+  <rect width="32" height="32" rx="7" fill="#1c1917" />
+  <path
+    d="M4 20.5C8 14 12.5 11 16 11s8 3 12 9.5"
+    stroke="#faf8f5"
+    stroke-width="1.7"
+    stroke-linecap="round"
+  />
+  <path
+    d="M6.5 22.5c3.2-5 6.8-7.5 9.5-7.5s6.3 2.5 9.5 7.5"
+    stroke="#faf8f5"
+    stroke-width="1.7"
+    stroke-linecap="round"
+  />
+  <path d="M16 8v4" stroke="#faf8f5" stroke-width="1.7" stroke-linecap="round" />
+  <circle cx="16" cy="6.5" r="1.6" fill="#faf8f5" />
+</svg>

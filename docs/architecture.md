@@ -172,7 +172,13 @@ Escrow writes return a **pending handle** (`GET /api/transactions/:id`); treat s
 
 ## Deployed testnet artifacts
 
-- **Contract:** `0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52`
-- **Deploy block:** `61231705`
-- **Subgraph id:** `Fnr7E8tC1HbD1bvdAsTXMwe5R5kZdx98pH1bhmcWWGeL` (Graph Network gateway)
-- **Explorer:** [testnet.arcscan.app](https://testnet.arcscan.app)
+| Artifact | Value |
+| -------- | ----- |
+| **TaskEscrow contract** | [`0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52`](https://testnet.arcscan.app/address/0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52) |
+| **Agent wallet** (Circle) | [`0x42472b448b6ba8bb654483d4773db715901a64a7`](https://testnet.arcscan.app/address/0x42472b448b6ba8bb654483d4773db715901a64a7) |
+| **Relayer wallet** (Circle) | [`0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1`](https://testnet.arcscan.app/address/0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1) |
+| **Deploy block** | `61231705` |
+| **Subgraph id** | `Fnr7E8tC1HbD1bvdAsTXMwe5R5kZdx98pH1bhmcWWGeL` (Graph Network gateway) |
+| **Explorer** | [testnet.arcscan.app](https://testnet.arcscan.app) |
+
+On-chain source of truth for the contract: `contracts/deployments/arc-testnet.json`. Wallet addresses match `CIRCLE_AGENT_WALLET_ADDRESS` / `CIRCLE_RELAYER_WALLET_ADDRESS` in `.env.local`.

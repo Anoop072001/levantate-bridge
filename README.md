@@ -189,6 +189,16 @@ a worker or reach worker funds — there is no custodial worker wallet to reach.
 - **Faucet:** [faucet.circle.com](https://faucet.circle.com) (10 USDC/hr)
 - **Explorer:** [testnet.arcscan.app](https://testnet.arcscan.app)
 
+### Deployed addresses (Arc testnet)
+
+| Role | Address | Arcscan |
+| ---- | ------- | ------- |
+| **TaskEscrow contract** | `0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52` | [view](https://testnet.arcscan.app/address/0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52) |
+| **Agent wallet** (Circle — funds escrow, settles tasks) | `0x42472b448b6ba8bb654483d4773db715901a64a7` | [view](https://testnet.arcscan.app/address/0x42472b448b6ba8bb654483d4773db715901a64a7) |
+| **Relayer wallet** (Circle — submits `placeBid` / `submitWork`) | `0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1` | [view](https://testnet.arcscan.app/address/0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1) |
+
+Deploy block: `61231705` (`0x3a65259`). Canonical copy: [`contracts/deployments/arc-testnet.json`](contracts/deployments/arc-testnet.json).
+
 ## Worker wallets are self-custodied
 
 Workers keep their own keys. At `/verify` a worker connects an existing wallet and signs a single off-chain challenge — free, moves nothing, authorizes no transaction. The first Selfie Check bid binds that address one-to-one with the World ID nullifier, and `approveWork` pays it directly.
@@ -234,3 +244,4 @@ Those runs predate three changes that still need a re-verification pass: self-cu
 | [`docs/graph.md`](docs/graph.md) | Subgraph manifest, mappings, agent budget + bid scoring queries |
 | [`docs/spec.md`](docs/spec.md) | Full product specification |
 | [`docs/selfie-check-feedback.md`](docs/selfie-check-feedback.md) | Selfie Check Beta friction log for TFH |
+| [`docs/ai-attribution.md`](docs/ai-attribution.md) | AI use disclosure (product + development) |

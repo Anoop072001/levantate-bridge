@@ -19,6 +19,11 @@ const instrument = Instrument_Serif({
 export const metadata: Metadata = {
   title: "Levantate Bridge",
   description: "Agent-to-human task marketplace on Arc testnet",
+  icons: {
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    shortcut: "/favicon.svg",
+    apple: [{ url: "/logo.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

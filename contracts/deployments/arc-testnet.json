@@ -1,6 +1,8 @@
 {
   "chainId": 5042002,
   "contractAddress": "0xc8f1db364b14d7aa4ea620bf9f649ef3d7f14d52",
-  "deployBlock": 0x3a65259,
-  "usdc": "0x3600000000000000000000000000000000000000"
+  "deployBlock": 61231705,
+  "usdc": "0x3600000000000000000000000000000000000000",
+  "agentWalletAddress": "0x42472b448b6ba8bb654483d4773db715901a64a7",
+  "relayerWalletAddress": "0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1"
 }
