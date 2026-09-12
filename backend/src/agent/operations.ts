@@ -5,13 +5,16 @@ import {
   type AgentFundingHint,
 } from "../chain/agent-wallet.js";
 import { createArcPublicClient, getEscrowAddress, getUsdcAddress } from "../chain/escrow.js";
-import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
+import { invalidateOnChainTaskCache, nowSeconds, readOnChainTask } from "../chain/task-state.js";
 import { requireEnv } from "../env.js";
+import { verifyRelayEffectOnChain } from "../relayer/verify-on-chain.js";
 import { enqueueContractCall } from "../relayer/submit.js";
 import {
   getBid,
+  getLatestConfirmedRelayForTask,
   getTask,
   listBidsForTask,
+  updateRelayedTransaction,
   upsertTask,
   type RelayedTransaction,
 } from "../store.js";
@@ -168,11 +171,35 @@ export async function postTask(input: PostTaskInput): Promise<OpResult<{ task: P
 }
 
 export interface SelectWinnerResult {
-  transaction: RelayedTransaction;
+  transaction?: RelayedTransaction;
   bidId: number;
   workerAddress: string;
   /** Present when the winner was chosen here from live subgraph signals rather than supplied. */
   selection: BidSelectionResult | null;
+  /** Task was already assigned on-chain — no new relay submitted. */
+  alreadyAssigned?: boolean;
+}
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+async function alreadyAssignedWinnerResult(taskId: number): Promise<SelectWinnerResult | null> {
+  invalidateOnChainTaskCache(taskId);
+  const onChain = await readOnChainTask(taskId);
+  if (onChain.state < 2 || onChain.state > 4) return null;
+  if (nowSeconds() <= onChain.bidDeadline) return null;
+  if (onChain.assignedWorker.toLowerCase() === ZERO_ADDRESS) return null;
+
+  const transaction = await getLatestConfirmedRelayForTask(taskId, "select_winner");
+  console.log(
+    `[agent] task ${taskId} already assigned to ${onChain.assignedWorker} — skipping selectWinner`,
+  );
+  return {
+    bidId: Number(onChain.winningBidId),
+    workerAddress: onChain.assignedWorker,
+    selection: null,
+    alreadyAssigned: true,
+    transaction,
+  };
 }
 
 /**
@@ -187,8 +214,13 @@ export async function selectWinner(
     return { ok: false, status: 404, error: "Task not found" };
   }
 
+  invalidateOnChainTaskCache(taskId);
   const onChain = await readOnChainTask(taskId);
   if (onChain.state !== 1) {
+    const existing = await alreadyAssignedWinnerResult(taskId);
+    if (existing) {
+      return { ok: true, ...existing };
+    }
     return { ok: false, status: 409, error: `Task is ${onChain.stateLabel}; select requires Bidding` };
   }
   if (nowSeconds() <= onChain.bidDeadline) {
@@ -233,7 +265,36 @@ export async function selectWinner(
     round: onChain.round,
     worker: workerAddress,
   });
-  if (tx.status === "failed") return { ...failed(tx, "selectWinner"), selection: selection ?? undefined };
+  if (tx.status === "failed") {
+    const verified = await verifyRelayEffectOnChain(
+      {
+        kind: "select_winner",
+        taskId,
+        round: onChain.round,
+        worker: workerAddress,
+      },
+      tx.txHash,
+    );
+    if (verified.confirmed) {
+      const repaired = await updateRelayedTransaction(tx.id, {
+        status: "confirmed",
+        txHash: verified.txHash ?? tx.txHash,
+        error: undefined,
+      });
+      return {
+        ok: true,
+        transaction: repaired,
+        bidId: chosenBidId,
+        workerAddress,
+        selection,
+      };
+    }
+    const existing = await alreadyAssignedWinnerResult(taskId);
+    if (existing) {
+      return { ok: true, ...existing };
+    }
+    return { ...failed(tx, "selectWinner"), selection: selection ?? undefined };
+  }
 
   return { ok: true, transaction: tx, bidId: chosenBidId, workerAddress, selection };
 }

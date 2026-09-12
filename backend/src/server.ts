@@ -3,7 +3,7 @@ import { URL } from "node:url";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { isAddress } from "viem";
 import { loadRootEnv, requireEnv } from "./env.js";
-import { reconcileSubmittedTransactions } from "./relayer/reconcile.js";
+import { reconcileRelayedTransactions } from "./relayer/reconcile.js";
 import { createWalletChallenge, consumeWalletChallenge } from "./wallet/challenge.js";
 import { createSignalToken, registerExpectedSignal } from "./world-id/signals.js";
 import {
@@ -12,8 +12,8 @@ import {
 } from "./store.js";
 
 loadRootEnv();
-void reconcileSubmittedTransactions().then((n) => {
-  if (n > 0) console.log(`[relayer] reconciled ${n} submitted transaction(s) via RPC receipt`);
+void reconcileRelayedTransactions().then((n) => {
+  if (n > 0) console.log(`[relayer] reconciled ${n} relayed transaction(s) via Arc RPC / on-chain state`);
 });
 if (process.env.AGENT_WINNER_LOOP !== "false") {
   void import("./agent/winner-loop.js").then((m) => m.startWinnerSelectionLoop());
@@ -25,10 +25,12 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
 type AgentRoute = typeof import("./routes/agent.js");
 type TasksRoute = typeof import("./routes/tasks.js");
 type WorkerRoute = typeof import("./routes/worker.js");
+type RpcProxyRoute = typeof import("./routes/rpc-proxy.js");
 
 let agentRouteMod: AgentRoute | undefined;
 let tasksRouteMod: TasksRoute | undefined;
 let workerRouteMod: WorkerRoute | undefined;
+let rpcProxyRouteMod: RpcProxyRoute | undefined;
 
 async function agentRoute() {
   agentRouteMod ??= await import("./routes/agent.js");
@@ -43,6 +45,11 @@ async function tasksRoute() {
 async function workerRoute() {
   workerRouteMod ??= await import("./routes/worker.js");
   return workerRouteMod;
+}
+
+async function rpcProxyRoute() {
+  rpcProxyRouteMod ??= await import("./routes/rpc-proxy.js");
+  return rpcProxyRouteMod;
 }
 
 function json(res: import("node:http").ServerResponse, status: number, body: unknown) {
@@ -103,6 +110,7 @@ const server = createServer(async (req, res) => {
     req.method === "POST" && !isMultipartSubmit ? await readBody(req) : undefined;
 
   try {
+    if (await (await rpcProxyRoute()).handleRpcProxyRoute(req, url.pathname, res, send, body)) return;
     if (await (await agentRoute()).handleAgentRoute(req, res, url, body, send)) return;
     if (await (await tasksRoute()).handleTasksRoute(req, res, url, body, send)) return;
     if (await (await workerRoute()).handleWorkerRoute(req, res, url, body, send)) return;

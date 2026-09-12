@@ -6,9 +6,7 @@ import {
   updateRelayedTransaction,
   type RelayedTransaction,
 } from "../store.js";
-import { invalidateOnChainTaskCache } from "../chain/task-state.js";
-import { waitForArcReceipt } from "../chain/wait-receipt.js";
-import { maybeDeleteSpentProofsForTask } from "../world-id/spent-proofs-cleanup.js";
+import { finalizeRelayOnArc } from "./finalize-relay.js";
 import { getWalletQueue } from "./queue.js";
 
 export interface ContractCallInput {
@@ -24,17 +22,24 @@ export interface ContractCallInput {
   idempotencyKey?: string;
 }
 
-async function waitForCircleTx(circleTxId: string): Promise<string | undefined> {
+type CircleWaitResult =
+  | { status: "complete"; txHash: string }
+  | { status: "failed"; txHash?: string }
+  | { status: "timeout" };
+
+async function waitForCircleTx(circleTxId: string): Promise<CircleWaitResult> {
   const client = createCircleClient();
   for (let i = 0; i < 60; i++) {
     const res = await client.getTransaction({ id: circleTxId });
     const state = res.data?.transaction?.state;
     const hash = res.data?.transaction?.txHash;
-    if (state === "COMPLETE" && hash) return hash;
-    if (state === "FAILED") throw new Error(`Circle transaction ${circleTxId} failed`);
+    if (state === "COMPLETE" && hash) return { status: "complete", txHash: hash };
+    if (state === "FAILED") {
+      return { status: "failed", txHash: hash ?? undefined };
+    }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  throw new Error(`Timed out waiting for Circle transaction ${circleTxId}`);
+  return { status: "timeout" };
 }
 
 async function submitContractCall(input: ContractCallInput): Promise<RelayedTransaction> {
@@ -82,42 +87,30 @@ async function submitContractCall(input: ContractCallInput): Promise<RelayedTran
   await updateRelayedTransaction(pending.id, { status: "submitted", circleTxId });
 
   try {
-    const txHash = await waitForCircleTx(circleTxId);
-    if (!txHash) {
-      return updateRelayedTransaction(pending.id, {
-        status: "failed",
-        error: "Circle completed without transaction hash",
-      });
-    }
-    await updateRelayedTransaction(pending.id, { txHash, status: "submitted" });
+    const circleResult = await waitForCircleTx(circleTxId);
 
-    try {
-      const outcome = await waitForArcReceipt(txHash);
-      if (input.taskId !== undefined) {
-        invalidateOnChainTaskCache(input.taskId);
-      }
-      if (outcome === "failed") {
-        return updateRelayedTransaction(pending.id, {
-          txHash,
-          status: "failed",
-          error: "Transaction reverted on-chain",
-        });
-      }
-      const confirmed = await updateRelayedTransaction(pending.id, {
-        txHash,
-        status: "confirmed",
-      });
-      await maybeDeleteSpentProofsForTask(input.kind, input.taskId);
-      return confirmed;
-    } catch (receiptErr) {
-      console.warn(
-        `[relayer] receipt wait incomplete for ${txHash}: ${
-          receiptErr instanceof Error ? receiptErr.message : receiptErr
-        }`,
-      );
-      return updateRelayedTransaction(pending.id, { txHash, status: "submitted" });
+    if (circleResult.status === "complete") {
+      return finalizeRelayOnArc(pending, input, circleResult.txHash);
     }
+
+    if (circleResult.status === "failed") {
+      if (circleResult.txHash) {
+        console.warn(
+          `[relayer] Circle reported FAILED for ${circleTxId} but returned txHash — confirming on Arc`,
+        );
+      } else {
+        console.warn(
+          `[relayer] Circle reported FAILED for ${circleTxId} with no hash — checking on-chain effect`,
+        );
+      }
+      return finalizeRelayOnArc(pending, input, circleResult.txHash);
+    }
+
+    console.warn(`[relayer] Timed out waiting for Circle transaction ${circleTxId} — checking on-chain effect`);
+    return finalizeRelayOnArc(pending, input);
   } catch (err) {
+    const recovered = await finalizeRelayOnArc(pending, input);
+    if (recovered.status === "confirmed") return recovered;
     return updateRelayedTransaction(pending.id, {
       status: "failed",
       error: err instanceof Error ? err.message : "Transaction failed",

@@ -1,5 +1,11 @@
 import type { PublicClient } from "viem";
+import { createArcPublicClient } from "./escrow.js";
 import { nowSeconds, readOnChainTask, TASK_STATE } from "./task-state.js";
+import {
+  fetchSubgraphTask,
+  fetchSubgraphTasksBatch,
+  mapSubgraphTaskRow,
+} from "../subgraph/tasks.js";
 import { listBidsForTask, listInFlightRelaysForTask, type TaskRecord } from "../store.js";
 
 export type AgentActivity =
@@ -43,7 +49,7 @@ async function attachAgentActivity<T extends Awaited<ReturnType<typeof enrichTas
 
 const ZERO = "0x0000000000000000000000000000000000000000" as const;
 
-/** DB-backed view when Arc RPC is slow or unavailable — refresh the page to retry live reads. */
+/** DB-backed view when neither subgraph nor RPC is available. */
 export async function enrichTaskFromStore(task: TaskRecord, bidCount?: number) {
   const bids =
     bidCount !== undefined
@@ -59,29 +65,38 @@ export async function enrichTaskFromStore(task: TaskRecord, bidCount?: number) {
   };
 }
 
+async function enrichTaskFromRpc(task: TaskRecord, client?: PublicClient) {
+  const onChain = await readOnChainTask(task.id, client);
+  return {
+    ...task,
+    bidDeadline: onChain.bidDeadline.toString(),
+    submissionWindow: onChain.submissionWindow.toString(),
+    submissionDeadline: onChain.submissionDeadline.toString(),
+    round: onChain.round,
+    state: onChain.state,
+    stateLabel: onChain.stateLabel,
+    assignedWorker: onChain.assignedWorker,
+    currentRoundBidCount: onChain.currentRoundBidCount.toString(),
+    maxBudget: onChain.maxBudget.toString(),
+    stale: false as const,
+  };
+}
+
 /**
- * Merges stored task with live on-chain state. Falls back to Supabase when RPC fails so pages
- * still load during Arc testnet outages.
+ * Worker-facing task reads prefer The Graph (one batch query for lists). Arc RPC is fallback only
+ * when the subgraph is down or has not indexed the task yet. Writes still confirm via Arc RPC.
  */
 export async function enrichTask(task: TaskRecord, client?: PublicClient) {
+  const subgraph = await fetchSubgraphTask(String(task.id));
+  if (subgraph) {
+    return { ...task, ...mapSubgraphTaskRow(subgraph) };
+  }
+
   try {
-    const onChain = await readOnChainTask(task.id, client);
-    return {
-      ...task,
-      bidDeadline: onChain.bidDeadline.toString(),
-      submissionWindow: onChain.submissionWindow.toString(),
-      submissionDeadline: onChain.submissionDeadline.toString(),
-      round: onChain.round,
-      state: onChain.state,
-      stateLabel: onChain.stateLabel,
-      assignedWorker: onChain.assignedWorker,
-      currentRoundBidCount: onChain.currentRoundBidCount.toString(),
-      maxBudget: onChain.maxBudget.toString(),
-      stale: false as const,
-    };
+    return await enrichTaskFromRpc(task, client);
   } catch (err) {
     console.warn(
-      `[rpc] enrichTask(${task.id}) failed — using stored snapshot: ${
+      `[task-view] task ${task.id} — subgraph miss and RPC failed, using store snapshot: ${
         err instanceof Error ? err.message : err
       }`,
     );
@@ -91,12 +106,23 @@ export async function enrichTask(task: TaskRecord, client?: PublicClient) {
 
 export type EnrichedTask = Awaited<ReturnType<typeof enrichTask>>;
 
-/** List pages: one RPC at a time through the queue instead of N parallel eth_calls. */
+/** List/detail pages: one subgraph round-trip for all tasks, RPC only for gaps. */
 export async function enrichAllTasks(tasks: TaskRecord[], client?: PublicClient) {
+  const publicClient = client ?? createArcPublicClient();
+  const subgraphMap = await fetchSubgraphTasksBatch(tasks.map((t) => String(t.id)));
   const enriched = [];
+
   for (const task of tasks) {
-    enriched.push(await attachAgentActivity(await enrichTask(task, client)));
+    const subgraph = subgraphMap.get(String(task.id));
+    let base: Awaited<ReturnType<typeof enrichTask>>;
+    if (subgraph) {
+      base = { ...task, ...mapSubgraphTaskRow(subgraph) };
+    } else {
+      base = await enrichTask(task, publicClient);
+    }
+    enriched.push(await attachAgentActivity(base));
   }
+
   return enriched;
 }
 

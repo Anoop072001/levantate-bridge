@@ -383,7 +383,15 @@ export async function handleTasksRoute(
       respondFailure(json, result);
       return true;
     }
-    json(202, pendingHandle(result.transaction));
+    if (result.transaction) {
+      json(202, pendingHandle(result.transaction));
+    } else {
+      json(200, {
+        alreadyAssigned: true,
+        bidId: result.bidId,
+        workerAddress: result.workerAddress,
+      });
+    }
     return true;
   }
 

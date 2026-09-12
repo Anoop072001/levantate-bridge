@@ -1,5 +1,5 @@
 import { createArcPublicClient } from "../chain/escrow.js";
-import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
+import { invalidateOnChainTaskCache, nowSeconds, readOnChainTask } from "../chain/task-state.js";
 import {
   getProof,
   getTask,
@@ -96,6 +96,7 @@ async function maybeAssignWinner(taskId: number): Promise<AgentAction | undefine
     return undefined;
   }
 
+  invalidateOnChainTaskCache(taskId);
   const onChain = await readOnChainTask(taskId);
   if (onChain.state !== 1 || nowSeconds() <= onChain.bidDeadline) {
     return undefined;

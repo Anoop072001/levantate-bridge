@@ -10,6 +10,7 @@ Levantate Bridge indexes every escrow state transition on **Arc testnet** and qu
 
 | Use | Where in code | GraphQL source |
 | --- | ------------- | -------------- |
+| **Worker UI task state** | `backend/src/chain/task-view.ts`, `backend/src/subgraph/tasks.ts` | `Task` entity (state, deadlines, round, bids) — one batch query for list/detail |
 | **Budget derivation** | `backend/src/agent/budget.ts` | Median paid amount + submission window from `Payment` entities |
 | **Bid scoring** | `backend/src/agent/score-bids.ts` | Worker `completionRate`, `missedDeadlines`, historical price median |
 | **Winner loop** | `backend/src/agent/runner.ts`, `operations.ts` | Calls `scoreBids` after bid deadline |

@@ -505,3 +505,33 @@ export async function listSubmittedRelayedTransactions(): Promise<RelayedTransac
   if (error) fail("listSubmittedRelayedTransactions", error);
   return (data ?? []).map(toRelayed);
 }
+
+export async function listFailedRelayedTransactions(): Promise<RelayedTransaction[]> {
+  const { data, error } = await getSupabase()
+    .from("relayed_transactions")
+    .select("*")
+    .eq("status", "failed")
+    .not("task_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(50)
+    .returns<RelayedRow[]>();
+  if (error) fail("listFailedRelayedTransactions", error);
+  return (data ?? []).map(toRelayed);
+}
+
+export async function getLatestConfirmedRelayForTask(
+  taskId: number,
+  kind: string,
+): Promise<RelayedTransaction | undefined> {
+  const { data, error } = await getSupabase()
+    .from("relayed_transactions")
+    .select("*")
+    .eq("task_id", taskId)
+    .eq("kind", kind)
+    .eq("status", "confirmed")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<RelayedRow>();
+  if (error) fail("getLatestConfirmedRelayForTask", error);
+  return data ? toRelayed(data) : undefined;
+}

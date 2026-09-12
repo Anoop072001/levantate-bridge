@@ -551,15 +551,18 @@ export async function runAgentTool(
       }
       return {
         ok: true,
-        summary: `Assigned task ${taskId} to bid ${result.bidId}`,
+        summary: result.alreadyAssigned
+          ? `Task ${taskId} already assigned to ${result.workerAddress}`
+          : `Assigned task ${taskId} to bid ${result.bidId}`,
         payload: {
           task_id: taskId,
           bid_id: result.bidId,
           worker: result.workerAddress,
+          already_assigned: result.alreadyAssigned ?? false,
           scoring: result.selection?.reasoning.message ?? "explicit bid id",
-          status: relayChainStatus(result.transaction),
+          status: result.transaction ? relayChainStatus(result.transaction) : "confirmed on-chain (already assigned)",
         },
-        transactions: [transactionResponse(result.transaction)],
+        transactions: result.transaction ? [transactionResponse(result.transaction)] : [],
       };
     }
 
