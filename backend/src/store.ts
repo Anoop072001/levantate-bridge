@@ -359,13 +359,28 @@ export async function getTask(id: number): Promise<TaskRecord | undefined> {
   return data ? toTask(data) : undefined;
 }
 
-/** Drop bids/proofs that cannot exist on the current escrow (ids restart at 0 on redeploy). */
+/** Drop rows that cannot exist on the current escrow (ids restart at 0 on redeploy). */
 export async function dropRowsFromPriorEscrow(
   nextTaskId: number,
   nextBidId: number,
   liveTasks: Pick<TaskRecord, "id" | "createdAt">[],
 ): Promise<void> {
   const db = getSupabase();
+
+  const { data: spentRange, error: spentRangeErr } = await db
+    .from("spent_proofs")
+    .delete()
+    .gte("task_id", nextTaskId)
+    .select("fingerprint");
+  if (spentRangeErr) fail("dropRowsFromPriorEscrow.spentProofs", spentRangeErr);
+
+  const { data: relayRange, error: relayRangeErr } = await db
+    .from("relayed_transactions")
+    .delete()
+    .gte("task_id", nextTaskId)
+    .select("id");
+  if (relayRangeErr) fail("dropRowsFromPriorEscrow.relays", relayRangeErr);
+
   const { error: bidRangeErr } = await db
     .from("bids")
     .delete()
@@ -374,6 +389,13 @@ export async function dropRowsFromPriorEscrow(
 
   const { error: proofRangeErr } = await db.from("proofs").delete().gte("task_id", nextTaskId);
   if (proofRangeErr) fail("dropRowsFromPriorEscrow.proofs", proofRangeErr);
+
+  const { data: droppedTasks, error: taskRangeErr } = await db
+    .from("tasks")
+    .delete()
+    .gte("id", nextTaskId)
+    .select("id");
+  if (taskRangeErr) fail("dropRowsFromPriorEscrow.tasks", taskRangeErr);
 
   for (const task of liveTasks) {
     const { error: oldBidErr } = await db
@@ -389,7 +411,25 @@ export async function dropRowsFromPriorEscrow(
       .eq("task_id", task.id)
       .lt("created_at", task.createdAt);
     if (oldProofErr) fail("dropRowsFromPriorEscrow.oldProofs", oldProofErr);
+
+    const { error: oldSpentErr } = await db
+      .from("spent_proofs")
+      .delete()
+      .eq("task_id", task.id)
+      .lt("created_at", task.createdAt);
+    if (oldSpentErr) fail("dropRowsFromPriorEscrow.oldSpentProofs", oldSpentErr);
+
+    const { error: oldRelayErr } = await db
+      .from("relayed_transactions")
+      .delete()
+      .eq("task_id", task.id)
+      .lt("created_at", task.createdAt);
+    if (oldRelayErr) fail("dropRowsFromPriorEscrow.oldRelays", oldRelayErr);
   }
+
+  console.info(
+    `[store] flushed prior-escrow leftovers: tasks=${droppedTasks?.length ?? 0} spent_proofs=${spentRange?.length ?? 0} relays=${relayRange?.length ?? 0} nextTaskId=${nextTaskId} nextBidId=${nextBidId}`,
+  );
 }
 
 export async function deleteBidsAndProofsForTask(taskId: number): Promise<void> {

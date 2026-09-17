@@ -61,7 +61,7 @@ async function dropPriorEscrowRows(client: PublicClient): Promise<void> {
   await dropRowsFromPriorEscrow(nextTaskId, nextBidId, liveTasks);
 }
 
-/** Once per process: drop Supabase bids/proofs left over from a previous escrow deploy. */
+/** Once per process: drop leftover Supabase tasks/bids/proofs from a previous escrow deploy. */
 export async function reconcileStoreToCurrentEscrow(client?: PublicClient): Promise<void> {
   const publicClient = client ?? createArcPublicClient();
   priorEscrowDrop ??= dropPriorEscrowRows(publicClient).catch((err) => {
