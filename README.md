@@ -37,7 +37,6 @@ If you are evaluating a specific integration, start with its doc — each file l
   - Supabase project URL + service role key
   - World ID app with RP signing key (Selfie Check Beta access for production preset)
   - The Graph Studio deploy key
-  - `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for proof evaluation
 - **Sandbox World App** on a physical device (TestFlight / Play private track) for Selfie Check
 
 ## Environment
@@ -136,7 +135,7 @@ After publishing to the Graph Network, set `GRAPH_QUERY_API_KEY` (from [Subgraph
 
 5. **Worker submits proof** — free text + optional link; only `keccak256` hash goes on-chain.
 
-6. **Agent evaluates proof** — LLM approves or rejects; on approve, USDC moves to the worker's own wallet and unspent budget refunds to the agent.
+6. **Operator AI evaluates proof** — in Claude/ChatGPT/Cursor, `get_task` then `approve_work` or `reject_work`. On approve, USDC moves to the worker's own wallet and unspent budget refunds to the poster.
 
 Poll any write via `GET /api/transactions/:id` — **confirmed** when Arc RPC returns a successful receipt (revert → **failed**).
 
@@ -266,7 +265,8 @@ an MCP OAuth access token. The backend will not execute fund-moving contract cal
 clients. CORS does not protect direct `curl` calls — the API key (or OAuth token) does. Each key is
 scoped to that agent's Circle wallet; it cannot settle another agent's tasks.
 
-**LLM proof evaluation** wraps worker submissions in `<worker_submission>` delimiters with an explicit untrusted-data instruction, requests structured JSON verdicts (not parseable `VERDICT:` text), and applies independent guardrails before honoring an approve (minimum substance length, rejection of verdict-injection patterns, empty file extraction). Autonomous approve still runs only when proof review is enabled; operators can reject manually or disable the winner loop.
+Proof review is the **operator's model** over MCP (`get_task` → `approve_work` / `reject_work`). The
+backend extracts file text for that model; it does not call OpenAI or Anthropic.
 
 Never commit `.env.local` or print secrets to logs.
 
@@ -274,7 +274,7 @@ Never commit `.env.local` or print secrets to logs.
 
 With one sandbox World ID identity:
 
-- Task post → bid → subgraph-informed winner selection → proof submit → LLM approve → USDC payout + refund
+- Task post → bid → subgraph-informed winner selection → proof submit → operator MCP approve → USDC payout + refund
 - Reject path: inadequate proof rejected, resubmit, paid
 - Reclaim path: missed deadline indexed as `MissedDeadline`; barred worker cannot re-bid same task
 - Duplicate same-amount bid blocked; duplicate nullifier blocked at API

@@ -290,8 +290,8 @@ export default function TaskDetailPage() {
             </p>
           )}
           <p className="text-sm text-muted-foreground">
-            Submit written proof or upload a file (PDF, Word, Excel, CSV, or plain text). The agent
-            reviews whichever format you choose.
+            Submit written proof or upload a file (PDF, Word, Excel, CSV, or plain text). The AI
+            that posted this task reviews it over MCP.
           </p>
           <div className="flex gap-2">
             <button
@@ -438,8 +438,8 @@ export default function TaskDetailPage() {
 
       {task.state === 3 && isAssignedWorker && (
         <p className="mt-8 text-sm">
-          Work submitted — the agent is reviewing your proof now. You can resubmit if the agent
-          rejects.
+          Work submitted — the AI that posted this task will review your proof over MCP. You can
+          resubmit if it rejects.
         </p>
       )}
 

@@ -23,10 +23,16 @@ pulled live from the subgraph — the contract does **not** force lowest-bid-win
 with zero bids, `cancelTask` refunds the full escrowed `maxBudget` to the **task poster**.
 - **D2 — Demo scenario.** The task is the spec's example: *"collect and summarize complaints from
 residents in this neighborhood."* The worker submits free text plus an optional link; the backend
-stores the content and only its `keccak256` hash goes on-chain as `proofRef`. The agent decides
-`approveWork` by LLM-evaluating the submitted proof against the task description, so a rejection
-path is required alongside approval. The demo runs two distinct sandbox World ID identities and at
-least two competing bids.
+stores the content and only its `keccak256` hash goes on-chain as `proofRef`. The **operator's AI**
+(Claude / ChatGPT / Cursor over MCP) reads the proof via `get_task` and calls `approve_work` or
+`reject_work`. The platform does **not** call OpenAI or Anthropic. A rejection path is required
+alongside approval. The demo runs two distinct sandbox World ID identities and at least two competing
+bids.
+- **D2a — Operator model reviews proofs (revised 2026-09-17, supersedes platform LLM approval in D2).**
+After `submitWork`, the task stays `Submitted` until the posting agent's MCP client calls
+`approve_work` or `reject_work`. `get_task` returns extracted proof text (PDF/Word/Excel included).
+There is no `evaluate_proof` tool and no `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` runtime dependency.
+Winner selection after the bid deadline remains the subgraph-scoring loop (`AGENT_WINNER_LOOP`).
 - **D3 — Bid submission.** The backend acts as a trusted relayer: `placeBid` takes the worker address
 as a parameter and is called by the backend's own Circle wallet. Workers never pay gas and never
 sign an on-chain transaction.
@@ -89,10 +95,10 @@ authoritative for whether something happened on-chain.
 
 Consequences worth noting: the relayer in D3 means the contract must trust one address to attribute
 bids, so `placeBid` needs relayer-only access control and the demo narration should be honest that
-bid attribution is backend-mediated. The LLM approval in D2 adds a rejection branch the contract
-state machine must handle: `rejectWork` moves a `Submitted` task back to `Assigned` so the worker can
-resubmit. No new terminal state and no extra refund path — the escrow stays locked until the work is
-approved or the task is cancelled for having no bids.
+bid attribution is backend-mediated. The rejection branch in D2/D2a is still required: `rejectWork`
+moves a `Submitted` task back to `Assigned` so the worker can resubmit. No new terminal state and no
+extra refund path — the escrow stays locked until the work is approved or the task is cancelled for
+having no bids.
 
 D6 forces two things that were previously loose. First, **every state-transition function must emit
 an event** — `submitWork`, `rejectWork`, `reclaimTask`, and `cancelTask` were all silent in the
@@ -279,8 +285,7 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Choose `submissionWindow` per task from history rather than a constant — median from paid tasks (defaults to 7200s)
 - [x] Bid evaluation: score every bid at or below `maxBudget` on price-versus-history, worker completion rate, and missed-deadline history; pick the best score — `scoreBids`
 - [x] Log the agent's reasoning (the numbers it pulled, the score per bid, why the winner won) — console + API responses on `/api/agent/*`
-- [x] Add the LLM client for proof evaluation (pin the version in `AGENTS.md`; API key via env, never committed) — `@anthropic-ai/sdk@0.123.0` + `openai@7.10.0` (uses whichever key is set)
-- [x] Proof evaluation: send the task description and submitted proof to the LLM, get an approve/reject verdict with a reason, then call `approveWork` or `rejectWork` accordingly — `evaluateProof` + agent cycle
+- [x] Proof review is the operator's MCP model (`get_task` → `approve_work` / `reject_work`). Platform LLM client removed 2026-09-17 (D2a).
 - [x] Verify the reject path end-to-end: submit deliberately inadequate proof, confirm the agent rejects it and the task returns to `Assigned` with a refreshed deadline — task 2: "asdf" rejected, resubmitted, paid 0.60 USDC
 - [x] Agent watches for assigned tasks past `submissionDeadline` and calls `reclaimTask` — manual via `POST /api/tasks/:id/reclaim` only (not auto in the agent loop)
 - [x] Verify the selection changes appropriately when subgraph history changes — task 2 budget derived from median paid (0.65 USDC); worker scored completion=1.00 and historyFit=0.92 from task 1 payment

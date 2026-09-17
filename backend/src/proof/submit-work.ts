@@ -238,14 +238,6 @@ export async function handleSubmitWork(
     createdAt: new Date().toISOString(),
   });
 
-  void import("../agent/runner.js")
-    .then((m) => m.reviewSubmittedTask(taskId))
-    .catch((err) => {
-      console.warn(
-        `[agent] task ${taskId} proof review failed: ${err instanceof Error ? err.message : err}`,
-      );
-    });
-
   json(202, { ...pendingHandle(tx), proofKind: payload.kind });
   return true;
 }

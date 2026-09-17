@@ -2,7 +2,7 @@
 
 This document satisfies the hackathon requirement to disclose **where AI was used** in Levantate Bridge. It covers two separate things:
 
-1. **Product AI** — LLMs that run *inside* the demo (operator agent, proof review).
+1. **Product AI** — models that run *in the demo* (operator MCP clients).
 2. **Development AI** — assistants used while *building* the repo (e.g. Cursor).
 
 Planning artifacts that directed implementation (not generated blindly): [`docs/spec.md`](spec.md), [`PLAN.md`](../PLAN.md), [`AGENTS.md`](../AGENTS.md).
@@ -15,12 +15,9 @@ These are intentional features judges can exercise in the demo.
 
 | Tool | Model / SDK | Where | Purpose |
 | ---- | ----------- | ----- | ------- |
-| **MCP** | External clients (Claude, ChatGPT, Cursor) | `backend/src/mcp/http.ts`, `backend/scripts/run-mcp.ts`, `backend/src/mcp/register.ts` | Streamable HTTP `/mcp` (OAuth or agent API key) or local stdio; tools spend **that** agent's Circle wallet. Operators do not use a website console. |
-| **OpenAI** or **Anthropic** | `gpt-4o` or `claude-sonnet-4-20250514` | `backend/src/agent/proof-evaluator.ts`, `backend/src/agent/runner.ts` | After worker submit: LLM reads task + proof (text or extracted PDF/Word/Excel) → APPROVE/REJECT recommendation |
+| **MCP** | External clients (Claude, ChatGPT, Cursor) | `backend/src/mcp/http.ts`, `backend/scripts/run-mcp.ts`, `backend/src/mcp/register.ts` | Streamable HTTP `/mcp` (OAuth or agent API key) or local stdio; tools spend **that** agent's Circle wallet. Operators do not use a website console. After a worker submits, **that same model** reads `get_task.submitted_proof` and calls `approve_work` or `reject_work`. |
 
-**Not LLM-driven:** bid winner scoring (`backend/src/agent/score-bids.ts` — The Graph statistics), World ID verification, Circle/Arc settlement, subgraph indexing.
-
-Env: `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` in `.env.local` (never committed).
+**Not LLM-driven (platform has no OpenAI/Anthropic client):** bid winner scoring (`backend/src/agent/score-bids.ts` — The Graph statistics), World ID verification, Circle/Arc settlement, subgraph indexing, file-text extraction for the operator model (`backend/src/proof/extract.ts`).
 
 ---
 
@@ -62,4 +59,4 @@ All changes were iteratively reviewed and run against real testnet/sandbox servi
 
 ## 5. Short statement for submission forms
 
-> **Product:** Operators post and settle through MCP (Claude, ChatGPT, Cursor). OpenAI or Anthropic evaluates submitted proofs. **Development:** Cursor AI assisted implementation and docs under human-written specs (`docs/spec.md`, `PLAN.md`, `AGENTS.md`). Integrations hit real Circle, World ID, Graph, and Arc testnet endpoints. AI assisted development; it did not replace human design, testing, or deployment decisions.
+> **Product:** Operators post, review proofs, and settle through MCP (Claude, ChatGPT, Cursor). Levantate does not call OpenAI or Anthropic. **Development:** Cursor AI assisted implementation and docs under human-written specs (`docs/spec.md`, `PLAN.md`, `AGENTS.md`). Integrations hit real Circle, World ID, Graph, and Arc testnet endpoints. AI assisted development; it did not replace human design, testing, or deployment decisions.

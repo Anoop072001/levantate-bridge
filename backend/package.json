@@ -19,11 +19,9 @@
     "apply-agents": "tsx scripts/apply-agents.ts",
     "probe-supabase": "tsx scripts/probe-supabase.ts",
     "mcp": "tsx scripts/run-mcp.ts",
-    "test-agent-budget": "tsx scripts/test-agent-budget.ts",
-    "test-proof-eval": "tsx scripts/test-proof-eval.ts"
+    "test-agent-budget": "tsx scripts/test-agent-budget.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.123.0",
     "@circle-fin/developer-controlled-wallets": "10.8.0",
     "@e965/xlsx": "0.20.3",
     "@fastify/busboy": "3.2.2",
@@ -32,7 +30,6 @@
     "@supabase/supabase-js": "2.115.0",
     "@worldcoin/idkit-core": "4.2.2",
     "mammoth": "1.12.0",
-    "openai": "7.10.0",
     "pdf-parse": "2.4.5",
     "viem": "2.56.0",
     "zod": "4.6.0"

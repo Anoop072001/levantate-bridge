@@ -24,8 +24,7 @@ import {
   AGENT_TRANSFER_GAS_RESERVE_MICRO,
   type AgentActor,
 } from "./operations.js";
-import { describeProofForAgent, evaluateProofRecord } from "../proof/evaluate-record.js";
-import { isProofEvaluationAvailable } from "./proof-evaluator.js";
+import { describeProofForAgent } from "../proof/describe.js";
 import { proofDownloadUrl } from "../proof/download-url.js";
 import { parseProofContent } from "../proof/payload.js";
 import { scoreBids } from "./score-bids.js";
@@ -118,6 +117,7 @@ async function taskSummaries() {
       t.round,
     ),
     assigned_worker: t.assignedWorker,
+    awaiting_operator_review: t.state === 3,
   }));
 }
 
@@ -125,6 +125,7 @@ export async function runAgentTool(
   name: string,
   args: Record<string, unknown>,
   actor: AgentActor,
+  publicOrigin?: string,
 ): Promise<AgentToolOutcome> {
   switch (name) {
     case "list_tasks": {
@@ -147,10 +148,22 @@ export async function runAgentTool(
       const bids = await listBidsForTask(taskId, task.round);
       const proof =
         task.state === 3 || task.state === 4 ? await getProof(taskId, task.round) : undefined;
-      const submittedProof = proof ? await describeProofForAgent(proof) : null;
+      const submittedProof = proof ? await describeProofForAgent(proof, publicOrigin) : null;
+      const awaitingReview = task.state === 3;
+      const fileProof =
+        submittedProof && "kind" in submittedProof && submittedProof.kind === "file"
+          ? submittedProof
+          : null;
+      const reviewHint = awaitingReview
+        ? fileProof?.extractedContent
+          ? "Read submitted_proof.extractedContent against the description, then approve_work or reject_work. Do not fetch downloadUrl."
+          : "Read submitted_proof against the description, then approve_work or reject_work."
+        : undefined;
       return {
         ok: true,
-        summary: `Read task ${taskId} (${task.stateLabel})`,
+        summary: awaitingReview
+          ? `Task ${taskId} is Submitted. ${reviewHint}`
+          : `Read task ${taskId} (${task.stateLabel})`,
         payload: {
           task_id: task.id,
           description: task.description,
@@ -174,6 +187,7 @@ export async function runAgentTool(
             amount_usdc: usdc(b.amount),
           })),
           submitted_proof: submittedProof,
+          awaiting_operator_review: awaitingReview,
         },
         transactions: [],
       };
@@ -389,54 +403,6 @@ export async function runAgentTool(
       };
     }
 
-    case "evaluate_proof": {
-      const taskId = Number(args.task_id);
-      if (!isProofEvaluationAvailable()) {
-        return {
-          ok: false,
-          summary: "Proof evaluation unavailable (no LLM API key)",
-          payload: {
-            error: "Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env.local",
-          },
-          transactions: [],
-        };
-      }
-      const stored = await getLiveTaskRecord(taskId);
-      if (!stored) {
-        return { ok: false, summary: `Task ${taskId} not found`, payload: { error: "Task not found" }, transactions: [] };
-      }
-      const task = await enrichTask(stored);
-      if (task.state !== 3 && task.state !== 4) {
-        return {
-          ok: false,
-          summary: `Task ${taskId} is ${task.stateLabel} — nothing to evaluate yet`,
-          payload: { error: "Proof evaluation requires Submitted or Paid state" },
-          transactions: [],
-        };
-      }
-      const proof = await getProof(taskId, task.round);
-      if (!proof) {
-        return {
-          ok: false,
-          summary: `No proof stored for task ${taskId}`,
-          payload: { error: "Proof not found" },
-          transactions: [],
-        };
-      }
-      const verdict = await evaluateProofRecord(task.description, proof);
-      return {
-        ok: true,
-        summary: `Task ${taskId}: ${verdict.approved ? "APPROVE" : "REJECT"} — ${verdict.reason}`,
-        payload: {
-          task_id: taskId,
-          state: task.stateLabel,
-          approved: verdict.approved,
-          reason: verdict.reason,
-        },
-        transactions: [],
-      };
-    }
-
     case "approve_work":
     case "reject_work": {
       const taskId = Number(args.task_id);
@@ -543,10 +509,12 @@ export async function runAgentTool(
           transactions: [],
         };
       }
-      const downloadUrl = proofDownloadUrl(taskId, round);
+      const downloadUrl = proofDownloadUrl(taskId, round, publicOrigin);
       return {
-        ok: true,
-        summary: `Download link ready for ${payload.fileName}`,
+        ok: Boolean(downloadUrl),
+        summary: downloadUrl
+          ? `Download link ready for ${payload.fileName}`
+          : `No public download URL (localhost is not reachable from Claude/ChatGPT). Use get_task submitted_proof.extractedContent, or set PUBLIC_BACKEND_URL to the public frontend origin.`,
         payload: {
           task_id: taskId,
           round,

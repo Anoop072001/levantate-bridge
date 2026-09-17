@@ -100,9 +100,7 @@ Verified by web search on **2026-09-08**. Re-verify before adding anything not l
 | viem                                       | `2.56.0`       | Ships `arcTestnet` as a built-in chain — `import { arcTestnet } from 'viem/chains'`. Requires TypeScript ≥ 5.9.                                      |
 | ethers                                     | `6.17.0`       | Only if something specifically needs it; viem is the default for this repo.                                                                          |
 | `@supabase/supabase-js`                    | `2.115.0`      | Verified 2026-09-09. Backend persistence. **Requires Node ≥ 22** — Node 20 support was dropped in 2.110.0.                                           |
-| `@anthropic-ai/sdk`                        | `0.123.0`      | Released 2026-09-01. For the agent's proof evaluation. Requires Node ≥ 20.                                                                           |
-| `openai`                                   | `7.10.0`       | Released 2026-09-03. Alternative to the above — pick one, not both. Requires Node ≥ 22.                                                              |
-| Tailwind CSS                               | `4.3.3`        | Verified 2026-09-10. Use `@tailwindcss/postcss` `4.3.3` with Next; no `tailwind.config.js`.                                                          |
+| Tailwind CSS                               | `4.3.3`       | Verified 2026-09-10. Use `@tailwindcss/postcss` `4.3.3` with Next; no `tailwind.config.js`.                                                          |
 | `motion`                                   | `13.2.0`       | Verified 2026-09-10. Import from `motion/react`.                                                                                                     |
 | `lucide-react`                             | `1.43.0`       | Verified 2026-09-10.                                                                                                                                 |
 | `clsx`                                     | `2.1.1`        | Classname helper for the worker UI.                                                                                                                  |
@@ -239,7 +237,7 @@ with empty values. Never commit real values, and never print a secret to chat, l
 message.
 
 Never commit: Circle API key, Circle entity secret or its recovery file, deployer private key, World
-ID RP signing key, World ID team API key, Graph deploy key, LLM API key, Supabase service role key,
+ID RP signing key, World ID team API key, Graph deploy key, Supabase service role key,
 agent API keys (plaintext is returned once at registration).
 
 **Worker funds are never custodial.** The backend holds Circle Developer-Controlled Wallets for
@@ -274,4 +272,3 @@ Environment inventory — keep this current as values are obtained:
 | `LEVANTATE_AGENT_API_KEY` | 4+ | optional — stdio MCP only; HTTP `/mcp` takes a per-agent key or OAuth token |
 | `BACKEND_URL` | 8 | frontend host only, **server-only** — Next reverse-proxies `/mcp` `/oauth` `/api` here (`http://localhost:3001` locally, Heroku in prod). Never `NEXT_PUBLIC_`. |
 | `PUBLIC_BACKEND_URL` | 8 | backend — public **frontend** origin for proof links (`https://<site>`). OAuth issuer prefers `x-forwarded-host` from the proxy. |
-| `ANTHROPIC_API_KEY` *or* `OPENAI_API_KEY` | 7 | present (`OPENAI_API_KEY`, D2 proof evaluation) |

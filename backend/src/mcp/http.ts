@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import { actorFromAgent, readProvidedAgentKey, resolveAgentFromBearer } from "../auth/agent.js";
 import { mcpUnauthorizedHeaders } from "../oauth/http.js";
+import { publicBaseUrl } from "../oauth/origin.js";
 import { registerLevantateMcpTools } from "./register.js";
 
 const MCP_CORS = {
@@ -44,7 +45,7 @@ export async function handleMcpHttp(
     { name: "levantate-bridge", version: "1.0.0" },
     { capabilities: { tools: {} } },
   );
-  registerLevantateMcpTools(server, actorFromAgent(agent));
+  registerLevantateMcpTools(server, actorFromAgent(agent), publicBaseUrl(req));
 
   // Public HTTPS: do not compose localhostHostValidation / localhostOriginValidation.
   // Those SDK helpers would 403 Claude/ChatGPT connectors hitting the deployed API.

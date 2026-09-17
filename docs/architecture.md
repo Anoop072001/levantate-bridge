@@ -102,8 +102,8 @@ sequenceDiagram
   B->>E: submitWork(proofHash)
   B->>R: receipt confirm
   E-->>G: WorkSubmitted
-  B->>B: LLM proof evaluation (on submit)
-  B->>E: approveWork
+  A->>B: MCP get_task (read proof)
+  A->>E: approveWork
   B->>R: receipt confirm
   E->>W: USDC winning bid
   E->>A: USDC refund (maxBudget − bid)
@@ -158,7 +158,7 @@ Implementation: `backend/src/agent/operations.ts` → `reclaimTask`, `subgraph/s
 | `POST /api/agent/tasks` | Authenticated agent | `postTask` (+ USDC approve; blocked if **that** wallet is underfunded) |
 | `POST /api/tasks/:id/bids` | Worker | `placeBid` via relayer + Selfie Check |
 | `POST /api/tasks/:id/select` | Task poster | `selectWinner` |
-| `POST /api/tasks/:id/submit` | Worker | `submitWork(proofHash)` via relayer → triggers proof review |
+| `POST /api/tasks/:id/submit` | Worker | `submitWork(proofHash)` via relayer. Stays Submitted until the poster MCP-approves. |
 | `POST /api/worker/change-payout-wallet` | Worker | Updates payout address (Selfie Check + new wallet sign) |
 | `POST /api/tasks/:id/reclaim` | Task poster | `reclaimTask` |
 | `POST /api/tasks/:id/cancel` | Task poster | `cancelTask` or `abortTask` |
@@ -179,8 +179,8 @@ Escrow writes return a **pending handle** (`GET /api/transactions/:id`); treat s
 | Loop | Default | Behavior |
 | ---- | ------- | -------- |
 | Winner selection | **On** (`AGENT_WINNER_LOOP`) | Every 30s after bid deadline, pick winner using subgraph scores |
-| Proof review | **On submit** | LLM eval + approve/reject when worker submits proof |
-| Full agent cycle | Manual | `POST /api/agent/run-once` or MCP `select_winner` / proof tools |
+| Proof review | **Operator MCP** | Poster's Claude/ChatGPT/Cursor calls `get_task` then `approve_work` / `reject_work` |
+| Full winner cycle | Manual | `POST /api/agent/run-once` or MCP `select_winner` |
 
 ## Deployed testnet artifacts
 
