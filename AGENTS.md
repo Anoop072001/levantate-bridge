@@ -35,7 +35,7 @@ architecture diagram, and demo narration. When touching any of these areas, pres
 
 | Sponsor                                  | What it must be observably doing                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Circle** (Agent Stack / Wallets / Arc) | Agent holds a Developer-Controlled Wallet that funds escrow in USDC. A second Developer-Controlled Wallet acts as the relayer that submits worker transactions so workers never need gas. Escrow contract is deployed **on Arc**, USDC as native gas/settlement asset. `approveWork` → `releasePayment` is an autonomous on-chain USDC settlement triggered by the agent, paid to the worker's **self-custodied** address. |
+| **Circle** (Agent Stack / Wallets / Arc) | Each requesting AI registers a Developer-Controlled Wallet that funds escrow in USDC. A second Developer-Controlled Wallet acts as the **shared relayer** that submits worker transactions so workers never need gas. Escrow contract is deployed **on Arc**, USDC as native gas/settlement asset. `approveWork` → `releasePayment` is an autonomous on-chain USDC settlement triggered by that task's poster, paid to the worker's **self-custodied** address. |
 | **World ID** (Selfie Check)              | **Every bid carries its own fresh Selfie Check proof**, bound by `signal` to that task, round, and amount, verified server-side and spendable once. The bidder's identity is derived from the proof, never from a client-supplied value. A one-time registration binds the nullifier to a self-custodied payout address, blocking one person bidding under multiple identities. Framing is **economic-participation eligibility gating**, not identity verification. |
 | **The Graph** (Subgraph Studio)          | Subgraph indexes every contract state transition (`TaskPosted`, `BidPlaced`, `WorkerAssigned`, `WorkSubmitted`, `WorkRejected`, `PaymentReleased`, `TaskReclaimed`, `TaskCancelled`). The agent **queries the subgraph live** to set budgets and pick winning bids from real historical signals, including missed-deadline history. Must be reasoning over live on-chain data, not a raw query printout. Relayed writes are confirmed via **Arc RPC receipts**, not subgraph indexing lag.        |
 
@@ -239,13 +239,14 @@ with empty values. Never commit real values, and never print a secret to chat, l
 message.
 
 Never commit: Circle API key, Circle entity secret or its recovery file, deployer private key, World
-ID RP signing key, World ID team API key, Graph deploy key, LLM API key, Supabase service role key.
+ID RP signing key, World ID team API key, Graph deploy key, LLM API key, Supabase service role key,
+agent API keys (plaintext is returned once at registration).
 
-**Worker funds are never custodial.** The backend holds Circle Developer-Controlled Wallets for the
-agent and the relayer only. Workers link a wallet they already control by signing an off-chain
-challenge, and escrow pays that address directly. Never reintroduce a backend-held worker wallet, a
-backend-initiated worker withdrawal, or any code path where a leaked backend credential can move a
-worker's earnings.
+**Worker funds are never custodial.** The backend holds Circle Developer-Controlled Wallets for
+requesting agents (one per registered AI) and the **shared relayer** only. Workers link a wallet they
+already control by signing an off-chain challenge, and escrow pays that address directly. Never
+reintroduce a backend-held worker wallet, a backend-initiated worker withdrawal, or any code path
+where a leaked backend credential can move a worker's earnings.
 
 Environment inventory — keep this current as values are obtained:
 
@@ -264,11 +265,11 @@ Environment inventory — keep this current as values are obtained:
 | `ESCROW_CONTRACT_ADDRESS` | 4, 5 | produced by Phase 2 deploy |
 | `ESCROW_DEPLOY_BLOCK` | 5 | produced by Phase 2 deploy |
 | `CIRCLE_WALLET_SET_ID` | 1 | produced by Phase 1 |
-| `CIRCLE_AGENT_WALLET_ID` | 4 | produced by Phase 1 |
 | `CIRCLE_RELAYER_WALLET_ID` | 4 | produced by Phase 4 |
 | `GRAPH_QUERY_API_KEY` | 6, 7 | Subgraph Studio → API Keys (query gateway; not the deploy key) |
 | `GRAPH_SUBGRAPH_ID` | 6, 7 | Network subgraph id (`Fnr7E8tC1HbD1bvdAsTXMwe5R5kZdx98pH1bhmcWWGeL`) |
 | `SUPABASE_URL` | 4 | pending — created with the hosted Supabase project |
 | `SUPABASE_SERVICE_ROLE_KEY` | 4 | pending — **server-only**, bypasses RLS |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | 8 | pending — public WalletConnect Cloud / Reown id for RainbowKit |
+| `LEVANTATE_AGENT_API_KEY` | 4+ | optional — stdio MCP only; HTTP `/mcp` takes a per-agent key or OAuth token |
 | `ANTHROPIC_API_KEY` *or* `OPENAI_API_KEY` | 7 | present (`OPENAI_API_KEY`, D2 proof evaluation) |

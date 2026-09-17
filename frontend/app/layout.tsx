@@ -18,7 +18,7 @@ const instrument = Instrument_Serif({
 
 export const metadata: Metadata = {
   title: "Levantate Bridge",
-  description: "Agent-to-human task marketplace on Arc testnet",
+  description: "Worker marketplace for tasks posted by AIs. Settle in USDC on Arc testnet.",
   icons: {
     icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
     shortcut: "/favicon.svg",

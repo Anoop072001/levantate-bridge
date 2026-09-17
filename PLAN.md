@@ -20,7 +20,7 @@ Ambiguities in `docs/spec.md`, decided 2026-09-08. These are binding — build t
 the deadline; `selectWinner` reverts before it. Any bid at or below `maxBudget` is eligible, and
 the agent picks the winner by scoring each bid on price-versus-history and worker completion rate
 pulled live from the subgraph — the contract does **not** force lowest-bid-wins. After the deadline
-with zero bids, `cancelTask` refunds the full escrowed `maxBudget` to the agent.
+with zero bids, `cancelTask` refunds the full escrowed `maxBudget` to the **task poster**.
 - **D2 — Demo scenario.** The task is the spec's example: *"collect and summarize complaints from
 residents in this neighborhood."* The worker submits free text plus an optional link; the backend
 stores the content and only its `keccak256` hash goes on-chain as `proofRef`. The agent decides
@@ -30,15 +30,18 @@ least two competing bids.
 - **D3 — Bid submission.** The backend acts as a trusted relayer: `placeBid` takes the worker address
 as a parameter and is called by the backend's own Circle wallet. Workers never pay gas and never
 sign an on-chain transaction.
-- **D3a — Worker wallet custody (revised 2026-09-09, supersedes the original D3 custody choice).**
+- **D3a — Worker wallet custody (revised 2026-09-09, supersedes the original D3 custody choice; multi-agent wallets 2026-09-17).**
 Workers hold their **own** wallets. The backend no longer creates a Circle Developer-Controlled
 Wallet per worker. At verification the worker connects an existing wallet and signs a one-off
 off-chain challenge (`personal_sign`, free, moves nothing); the backend checks the signature with
 viem `verifyMessage` and binds that address one-to-one with the World ID nullifier. `approveWork`
 pays that address directly, so a leaked backend credential cannot move worker earnings and no
-backend-mediated withdrawal endpoint exists. Circle Developer-Controlled Wallets remain for the
-**agent** (funds escrow) and the **relayer** (submits worker transactions) only. The zero-gas
-property for workers is preserved; the only added step is connecting a wallet once at signup.
+backend-mediated withdrawal endpoint exists. Circle Developer-Controlled Wallets are **per requesting
+agent** (each AI that registers gets its own wallet that funds escrow and settles its own tasks)
+plus **one shared relayer** (submits worker transactions). Workers remain self-custodied. The
+zero-gas property for workers is preserved; the only added worker step is connecting a wallet once
+at signup. Escrow `postTask` is public; only `task.poster` may select, approve, reject, reclaim, or
+cancel. Existing single-agent Arc deployments are abandoned on poster-model redeploy.
 - **D4 — Selfie Check gate.** Request access from `developers@toolsforhumanity.com` immediately (day
 one — it has lead time). Build the complete IDKit flow against another preset in the meantime, so
 that swapping in `selfieCheckLegacy()` touches only the preset call. The server-side verification,
@@ -46,20 +49,22 @@ nullifier storage, and duplicate-identity block are all real regardless of prese
 mocked.
 - **D5 — Submission deadline and reclaim.** `postTask` commits a `submissionWindow` duration.
 `selectWinner` sets `submissionDeadline = block.timestamp + submissionWindow`; `submitWork` reverts
-after it, so late work is impossible rather than ambiguous. `reclaimTask` is agent-only, requires
+after it, so late work is impossible rather than ambiguous. `reclaimTask` is poster-only, requires
 state `Assigned` and `block.timestamp > submissionDeadline`, and returns the task to `Open` with a
 fresh `bidDeadline` for a new bidding round. It clears the assignment, increments a `round` counter,
 and bars the defaulting worker from bidding again on that task. Escrow stays locked across the
 reclaim — the task still needs doing at the same budget — and is only refunded by `cancelTask` if a
 round closes with no bids. `rejectWork` also refreshes `submissionDeadline`, otherwise a rejection
 landing near the deadline would leave no time to resubmit. Every reclaim emits `TaskReclaimed`, which
-the subgraph indexes as a per-worker reputation signal.
+the subgraph indexes as a per-worker reputation signal. `selectWinner` / `approveWork` /
+`rejectWork` / `cancelTask` / `abortTask` are also poster-only (`msg.sender == task.poster`).
 - **D6 — Relayed transaction confirmation.** A transaction hash means *submitted*, never *succeeded*.
 Every relayed transaction is persisted before submission with a UUID v4 idempotency key, moves to
 `submitted` once a hash comes back, and reaches `confirmed` or `failed` from the **Arc RPC receipt**
 (`status = 1` → confirmed, `status = 0` → failed). Retries reuse the same idempotency key so Circle
 returns the original transaction instead of double-submitting. All submissions from one wallet pass
-through a single-concurrency FIFO queue (agent wallet and relayer wallet get separate queues)
+through a single-concurrency FIFO queue (each poster Circle wallet and the relayer wallet get
+separate queues keyed by `walletId`)
 because concurrent sends from one EVM wallet race on nonce assignment. If receipt polling times out,
 the row stays `submitted` until startup reconcile or the next poll finishes it. The subgraph is for
 agent budgeting and bid scoring only — not write confirmation.
@@ -183,11 +188,13 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 
 ### Supabase persistence (D7)
 
-- [x] `backend/supabase/schema.sql`: `workers`, `tasks`, `bids`, `proofs`, `relayed_transactions`; RLS enabled with no policies
+- [x] `backend/supabase/schema.sql`: `workers`, `tasks` (incl. `poster`), `agents`, `bids`, `proofs`, `relayed_transactions`; RLS enabled with no policies
 - [x] `@supabase/supabase-js@2.115.0` client using the service role key; async store in `backend/src/store.ts`
 - [x] One-shot importer for the old JSON store — `npm run migrate-db-json`
 - [x] Create the hosted Supabase project, run `schema.sql`, set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
 - [x] Re-run the end-to-end flow against Supabase and confirm reads/writes land — base schema + `pending_signals`, `agent_chats`, `agent_chat_messages`, `status` column, `proof-files` bucket verified via `npm run probe-supabase`
+- [x] Per-AI agent registry: `agents` table (hashed API key + Circle wallet id/address) and `tasks.poster` in `schema.sql` / `schema-add-agents.sql`; `POST /api/agents/register` calls Circle `createWallets`
+- [x] Remote MCP: Streamable HTTP `GET|POST|DELETE /mcp` (Bearer agent key, stateless) + stdio `npm run mcp` with `LEVANTATE_AGENT_API_KEY`; tools bound to that agent's wallet. Registration is HTTP-only.
 
 
 
@@ -196,7 +203,7 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Create and fund the backend relayer wallet with gas USDC; store its address for the contract's relayer role — `77388e4f-d917-59ef-8ada-ca1966c712d3` at `0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1`
 - [x] `relayed_transactions` table: idempotency key (UUID v4), kind, task id, round, worker, wallet, tx hash, status (`queued` → `submitted` → `confirmed` | `failed`), expected event, timestamps
 - [x] Persist the row **with its idempotency key before submitting**, so a crash between submit and record cannot orphan a transaction
-- [x] Single-concurrency FIFO queue per wallet (agent wallet and relayer wallet queued separately); dequeue the next submission only once the previous one has returned a hash and its nonce is assigned — `src/relayer/queue.ts`
+- [x] Single-concurrency FIFO queue per `walletId` (each poster Circle wallet and the relayer queued separately); dequeue the next submission only once the previous one has returned a hash and its nonce is assigned — `src/relayer/queue.ts`
 - [x] Pass the stored idempotency key on every submission, and reuse the same key on retry so Circle returns the original transaction rather than double-submitting
 - [x] Verify at integration time whether the sandbox accepts `idempotencyKey` in the request body (see the note in `AGENTS.md`); if rejected, fall back to the SDK's supported placement rather than dropping idempotency — accepted; `postTask`/`cancelTask` submissions succeeded with UUID keys
 - [ ] Periodic resync of the relayer's on-chain nonce to detect gaps or drift, per Circle's guidance
@@ -230,7 +237,7 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 ## Phase 5 — Subgraph
 
 - [x] Create the subgraph in Subgraph Studio; save the deploy key
-- [x] `subgraph/subgraph.yaml`: network `arc-testnet`, escrow address, start block = deploy block — `0xc8F1db3…4d52` (v2 with `abortTask` + duplicate-bid guard), block `61231705`
+- [x] `subgraph/subgraph.yaml`: network `arc-testnet`, escrow address, start block = deploy block — `0x0b2c4f5E437f016a1a27686D4004ac58Ca3510B9` (per-task poster), block `62525769`
 - [x] `subgraph/schema.graphql`: `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline` entities with the relations the agent will need to query
 - [x] Every entity stores `transactionHash` and `blockTimestamp` so the D6 tracker can correlate an indexed event back to the submission that produced it
 - [x] `Task` and `Bid` carry `round` so re-bid rounds are distinguishable from first-round bids in price analysis
@@ -244,7 +251,7 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Mapping handler for `TaskReclaimed` → `MissedDeadline` record, increments that worker's missed-deadline counter, resets `Task` to open at the new round
 - [x] Mapping handler for `TaskCancelled` → marks `Task` terminal
 - [x] Maintain derived worker reputation fields the agent needs: tasks assigned, tasks paid, **missed deadlines**, completion rate
-- [x] `graph auth` then `graph deploy` to Studio — deployed `v0.0.4` to slug `levantate-bridge` (reindexed from v2 escrow deploy)
+- [x] `graph auth` then `graph deploy` to Studio — deployed `v0.0.5` to slug `levantate-bridge` (poster-model escrow `0x0b2c4f5E…3510B9`, startBlock `62525769`; prior `v0.0.4` indexed the abandoned single-agent contract)
 - [x] Confirm in the Studio playground that **all eight** event types indexed and no mapping errors are logged — `TaskPosted` + `TaskCancelled` indexed for on-chain tasks 0–1; `hasIndexingErrors: false`
 - [x] Generate historical data: post and complete several tasks at varying prices so the agent has a real distribution to reason over — tasks 1–2 paid at 0.65/0.60 USDC; task 3 budget auto-set to median 0.65 USDC
 - [x] Generate at least one real missed-deadline reclaim in the history so the agent's penalty logic has something to act on — task 3 round 0 reclaim indexed; worker `0xf147…6066` missedDeadlines=1, rebid reverts

@@ -12,9 +12,20 @@ import {
 } from "./store.js";
 
 loadRootEnv();
+
+if (!process.env.CIRCLE_WALLET_SET_ID?.trim()) {
+  console.warn("[wallets] CIRCLE_WALLET_SET_ID is not set — agent registration cannot create Circle wallets");
+}
 void reconcileRelayedTransactions().then((n) => {
   if (n > 0) console.log(`[relayer] reconciled ${n} relayed transaction(s) via Arc RPC / on-chain state`);
 });
+void import("./chain/task-view.js").then((m) =>
+  m.reconcileStoreToCurrentEscrow().catch((err) => {
+    console.warn(
+      `[store] prior-escrow cleanup failed: ${err instanceof Error ? err.message : err}`,
+    );
+  }),
+);
 if (process.env.AGENT_WINNER_LOOP !== "false") {
   void import("./agent/winner-loop.js").then((m) => m.startWinnerSelectionLoop());
 }
@@ -26,11 +37,13 @@ type AgentRoute = typeof import("./routes/agent.js");
 type TasksRoute = typeof import("./routes/tasks.js");
 type WorkerRoute = typeof import("./routes/worker.js");
 type RpcProxyRoute = typeof import("./routes/rpc-proxy.js");
+type AgentsRoute = typeof import("./routes/agents.js");
 
 let agentRouteMod: AgentRoute | undefined;
 let tasksRouteMod: TasksRoute | undefined;
 let workerRouteMod: WorkerRoute | undefined;
 let rpcProxyRouteMod: RpcProxyRoute | undefined;
+let agentsRouteMod: AgentsRoute | undefined;
 
 async function agentRoute() {
   agentRouteMod ??= await import("./routes/agent.js");
@@ -52,12 +65,17 @@ async function rpcProxyRoute() {
   return rpcProxyRouteMod;
 }
 
+async function agentsRoute() {
+  agentsRouteMod ??= await import("./routes/agents.js");
+  return agentsRouteMod;
+}
+
 function json(res: import("node:http").ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
     "content-type": "application/json",
     "access-control-allow-origin": FRONTEND_ORIGIN,
     "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-headers": "content-type, authorization, x-operator-key, mcp-protocol-version",
   });
   res.end(JSON.stringify(body));
 }
@@ -70,17 +88,33 @@ async function readBody(req: import("node:http").IncomingMessage): Promise<unkno
 }
 
 const server = createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
+
+  if (await (await import("./oauth/http.js")).handleOAuthHttp(req, res, url)) return;
+
+  if (url.pathname === "/mcp") {
+    const { handleMcpHttp } = await import("./mcp/http.js");
+    try {
+      await handleMcpHttp(req, res, url.pathname);
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : "MCP request failed" }));
+      }
+    }
+    return;
+  }
+
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "access-control-allow-origin": FRONTEND_ORIGIN,
       "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-      "access-control-allow-headers": "content-type",
+      "access-control-allow-headers": "content-type, authorization, x-operator-key, mcp-protocol-version",
     });
     res.end();
     return;
   }
 
-  const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const send = (status: number, body: unknown) => json(res, status, body);
 
   if (req.method === "GET" && url.pathname === "/health") {
@@ -111,6 +145,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (await (await rpcProxyRoute()).handleRpcProxyRoute(req, url.pathname, res, send, body)) return;
+    if (await (await agentsRoute()).handleAgentsRoute(req, res, url, body, send)) return;
     if (await (await agentRoute()).handleAgentRoute(req, res, url, body, send)) return;
     if (await (await tasksRoute()).handleTasksRoute(req, res, url, body, send)) return;
     if (await (await workerRoute()).handleWorkerRoute(req, res, url, body, send)) return;

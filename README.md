@@ -15,7 +15,7 @@ If you are evaluating a specific integration, start with its doc — each file l
 
 | Sponsor | Integration doc | What to look for in the demo |
 | -------- | ----------------- | ----------------------------- |
-| **Circle + Arc** | [`docs/circle-arc.md`](docs/circle-arc.md) | Agent and relayer **Developer-Controlled Wallets** on Arc; USDC escrow; `approveWork` pays the worker's **self-custodied** address; workers never hold gas; writes confirmed via **Arc RPC receipts**. |
+| **Circle + Arc** | [`docs/circle-arc.md`](docs/circle-arc.md) | **Per-AI Circle wallets** fund escrow; **one relayer** submits worker txs; USDC escrow on Arc; `approveWork` pays the worker's **self-custodied** address; workers never hold gas; writes confirmed via **Arc RPC receipts**. |
 | **World ID** | [`docs/world-selfie-check.md`](docs/world-selfie-check.md) | **Selfie Check** (sandbox) on **every bid** and payout-wallet change; signal-bound to task/round/amount; identity from proof nullifier; one nullifier ↔ one payout address. |
 | **The Graph** | [`docs/graph.md`](docs/graph.md) | Subgraph on Arc testnet indexes all eight escrow events; agent **budget** and **bid scoring** query live history via the Network gateway. |
 
@@ -74,7 +74,7 @@ Create a project at [supabase.com](https://supabase.com), then run [`backend/sup
 
 RLS is enabled with no policies, so only the service role (the backend) can read or write.
 
-If you are upgrading from the old JSON file store, import it once with `npm run migrate-db-json` from `backend/`.
+If you already have a live database, also run [`backend/supabase/schema-add-agents.sql`](backend/supabase/schema-add-agents.sql) (or `npm run apply-agents` from `backend/` to print and probe).
 
 ### 3. Backend
 
@@ -99,7 +99,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Workers link a payout wallet at `/verify`, then browse tasks at `/tasks`. Selfie Check runs when they bid.
+Open `http://localhost:3000`. Workers link a payout wallet at `/verify`, then browse tasks at `/tasks`. Selfie Check runs when they bid. Operators connect through MCP — there is no operator console on this site.
 
 ### 5. Subgraph (optional — already deployed)
 
@@ -115,13 +115,14 @@ After publishing to the Graph Network, set `GRAPH_QUERY_API_KEY` (from [Subgraph
 
 ## Demo flow (single worker)
 
-1. **Post a task** — either ask the agent in plain English at `/agent` ("post a task to collect
-   neighborhood complaints, budget 0.2 USDC, bidding open 20 minutes"), or call the API directly
+1. **Post a task** — from Claude, ChatGPT, or Cursor over MCP (`https://<host>/mcp`), ask the model
+   to post a task. The landing page (`/#operators`) has the connector steps. Or call the API
    (defaults: 1h bid window, subgraph-derived budget):
 
    ```bash
    curl -s -X POST http://localhost:3001/api/agent/tasks \
      -H 'content-type: application/json' \
+     -H "Authorization: Bearer $LEVANTATE_AGENT_API_KEY" \
      -d '{"description":"Collect and summarize complaints from residents in this neighborhood."}'
    ```
 
@@ -142,19 +143,47 @@ Poll any write via `GET /api/transactions/:id` — **confirmed** when Arc RPC re
 | Action | How |
 | ------ | --- |
 | Reject resubmit | Submit weak proof → agent rejects → worker resubmits before deadline |
-| Reclaim missed deadline | `POST /api/tasks/:id/reclaim` with `{ "newBidDeadlineSeconds": 3600 }` |
-| Cancel open task | `POST /api/tasks/:id/cancel` (`abortTask` if bids exist) |
+| Reclaim missed deadline | `POST /api/tasks/:id/reclaim` with `{ "newBidDeadlineSeconds": 3600 }` — requires the poster's agent API key |
+| Cancel open task | `POST /api/tasks/:id/cancel` (`abortTask` if bids exist) — requires the poster's agent API key |
 
 The agent loop does **not** auto-reclaim or auto-post tasks. Reclaim and new tasks require an
-explicit API call or an instruction to the agent at `/agent`.
+explicit MCP tool call (or `POST /api/agent/tasks` with that agent's API key).
 
-### Agent console
+### Connect Claude, ChatGPT, or Cursor (MCP)
 
-`/agent` is a chat front end over the same escrow operations (`POST /api/agent/chat`, needs
-`OPENAI_API_KEY`). It can list and inspect tasks, score bids against live subgraph history, post
-tasks, select winners, approve or reject work, reclaim, and cancel. It reports every write as
-*submitted* until Arc RPC confirms the receipt (revert → *failed*), it asks before moving USDC, and it cannot bid for
-a worker or reach worker funds — there is no custodial worker wallet to reach.
+**Remote (Streamable HTTP + OAuth)** — Claude.ai or ChatGPT Developer Mode:
+
+1. Run the backend and expose it over HTTPS (`ngrok http 3001` or your deployed API).
+2. Optional: set `PUBLIC_BACKEND_URL` to that exact `https://…` origin so OAuth issuer URLs match the tunnel.
+3. Connector URL: `https://<host>/mcp`
+4. Authentication: **Sign in now**. OAuth client: **Use Claude’s published identity** (CIMD). ChatGPT uses the same OAuth endpoints automatically.
+5. When the browser opens Levantate, click **Create wallet and allow**. That mints a Circle wallet for that AI (same as `POST /api/agents/register`).
+6. Fund the wallet at [faucet.circle.com](https://faucet.circle.com) (Arc Testnet), then ask the model to post a task.
+
+`GET /mcp` without a token returns **401** with `WWW-Authenticate` pointing at `/.well-known/oauth-protected-resource`. That is how Claude/ChatGPT discover OAuth — it is not a bug.
+
+**Cursor / Claude Code** can still use a static API key (`POST /api/agents/register`) instead of OAuth:
+
+```json
+{
+  "mcpServers": {
+    "levantate-bridge": {
+      "type": "http",
+      "url": "https://<your-backend>/mcp",
+      "headers": { "Authorization": "Bearer lb_..." }
+    }
+  }
+}
+```
+
+**Local stdio** (`backend/mcp-config.example.json`):
+
+```bash
+cd backend && LEVANTATE_AGENT_API_KEY=lb_... npm run mcp
+```
+
+Tools (`post_task`, `transfer_usdc`, `select_winner`, `approve_work`, …) spend **that** agent's Circle wallet. Worker
+browse/bid/submit stays public.
 
 ## Useful API routes
 
@@ -165,8 +194,13 @@ a worker or reach worker funds — there is no custodial worker wallet to reach.
 | POST | `/api/tasks/:id/submit` | Submit proof |
 | GET | `/api/transactions/:id` | Relayed tx status |
 | GET | `/api/agent/budget` | Subgraph-derived budget params |
-| POST | `/api/agent/run-once` | Run one agent cycle |
-| POST | `/api/agent/chat` | Operator chat agent — drives the escrow via LLM tool calling |
+| POST | `/api/agents/register` | Mint a Circle wallet + one-time API key |
+| GET | `/api/agents/me` | This agent's wallet, USDC balance, faucet (Bearer key) |
+| POST | `/api/agents/transfer` | Send unused USDC from this agent's Circle wallet to an external address (Bearer key) |
+| GET | `/mcp` `POST` `DELETE` | Streamable HTTP MCP (OAuth bearer or agent API key) |
+| GET | `/.well-known/oauth-protected-resource` | MCP OAuth discovery (Claude / ChatGPT) |
+| GET | `/oauth/authorize` | Consent page — creates a Circle wallet on Allow |
+| POST | `/api/agent/run-once` | Run one agent cycle (agent auth) |
 | POST | `/api/wallet/challenge` | Issue the wallet-ownership message to sign |
 | POST | `/api/wallet/link` | Confirm the signature and remember the payout address |
 | GET | `/api/workers/:address/balance` | Worker USDC balance on Arc |
@@ -175,8 +209,9 @@ a worker or reach worker funds — there is no custodial worker wallet to reach.
 
 | Package | Command | Purpose |
 | ------- | ------- | ------- |
-| `backend` | `npm run setup-wallets` | Create Circle wallet set + agent wallet |
-| `backend` | `npm run setup-relayer-wallet` | Create and register relayer wallet |
+| `backend` | `npm run setup-wallets` | Create Circle wallet set (agents register their own wallets) |
+| `backend` | `npm run mcp` | Local stdio MCP (requires `LEVANTATE_AGENT_API_KEY`) |
+| `backend` | `npm run apply-agents` | Probe/print SQL for `agents` table + `tasks.poster` |
 | `backend` | `npm run migrate-db-json` | One-shot import of the legacy JSON store into Supabase |
 | `backend` | `npm run reconcile` | One-shot confirmation reconciler pass |
 | `contracts` | `forge test` | Escrow unit tests |
@@ -193,11 +228,11 @@ a worker or reach worker funds — there is no custodial worker wallet to reach.
 
 | Role | Address | Arcscan |
 | ---- | ------- | ------- |
-| **TaskEscrow contract** | `0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52` | [view](https://testnet.arcscan.app/address/0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52) |
-| **Agent wallet** (Circle — funds escrow, settles tasks) | `0x42472b448b6ba8bb654483d4773db715901a64a7` | [view](https://testnet.arcscan.app/address/0x42472b448b6ba8bb654483d4773db715901a64a7) |
+| **TaskEscrow contract** | `0x0b2c4f5E437f016a1a27686D4004ac58Ca3510B9` | [view](https://testnet.arcscan.app/address/0x0b2c4f5E437f016a1a27686D4004ac58Ca3510B9) |
 | **Relayer wallet** (Circle — submits `placeBid` / `submitWork`) | `0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1` | [view](https://testnet.arcscan.app/address/0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1) |
 
-Deploy block: `61231705` (`0x3a65259`). Canonical copy: [`contracts/deployments/arc-testnet.json`](contracts/deployments/arc-testnet.json).
+Requesting agents get their own Circle wallets at register time (not a single shared agent address).
+Deploy block: `62525769` (`0x3ba1149`). Canonical copy: [`contracts/deployments/arc-testnet.json`](contracts/deployments/arc-testnet.json).
 
 ## Worker wallets are self-custodied
 
@@ -213,14 +248,25 @@ Circle Developer-Controlled Wallets keep key material in Circle's infrastructure
 
 | Secret | If compromised |
 | ------ | -------------- |
-| `CIRCLE_API_KEY` + `CIRCLE_ENTITY_SECRET` | Attacker controls the **agent and relayer** wallets — can drain the escrow float and disrupt the marketplace. **Cannot touch worker earnings.** |
+| `CIRCLE_API_KEY` + `CIRCLE_ENTITY_SECRET` | Attacker can create agent wallets and control the **relayer** plus any Circle DCW in the set — can drain poster escrow float and disrupt the marketplace. **Cannot touch worker earnings.** |
 | Circle entity secret recovery file (kept outside the repo) | Same as above — rotate the entity secret immediately. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Full read/write on backend state. No key material, no ability to move funds. |
 | `DEPLOYER_PRIVATE_KEY` | Deploy scripts only, not used at runtime. |
 | `WORLD_SIGNING_KEY` | Forged RP signatures — not wallet access. |
+| Agent API key (`lb_…`) | Spends **that** agent's Circle wallet only (post/approve/cancel its tasks). Other agents' wallets stay isolated. |
 | Worker `nullifierHash` in browser `localStorage` | Display only. It no longer authorizes a bid — bidding needs a live Selfie Check — though it can still submit work for an already-assigned task. Not a private key, and cannot move funds. |
 
-The blast radius is bounded on purpose: **no single backend credential can move a worker's earnings.** A production deployment would add worker auth, rate limits, and Circle IP allowlists on top. Never commit `.env.local` or print secrets to logs.
+The blast radius is bounded on purpose: **no single backend credential can move a worker's earnings.**
+
+**Agent write routes** (`POST /api/tasks`, approve/reject/select/cancel/reclaim, mutating `/api/agent/*`,
+and `/mcp`) require a registered agent API key via `Authorization: Bearer …` or `X-Operator-Key`, or
+an MCP OAuth access token. The backend will not execute fund-moving contract calls for anonymous HTTP
+clients. CORS does not protect direct `curl` calls — the API key (or OAuth token) does. Each key is
+scoped to that agent's Circle wallet; it cannot settle another agent's tasks.
+
+**LLM proof evaluation** wraps worker submissions in `<worker_submission>` delimiters with an explicit untrusted-data instruction, requests structured JSON verdicts (not parseable `VERDICT:` text), and applies independent guardrails before honoring an approve (minimum substance length, rejection of verdict-injection patterns, empty file extraction). Autonomous approve still runs only when proof review is enabled; operators can reject manually or disable the winner loop.
+
+Never commit `.env.local` or print secrets to logs.
 
 ## Verified end-to-end (testnet)
 

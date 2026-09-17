@@ -5,9 +5,9 @@ import { createArcPublicClient, getEscrowAddress } from "../chain/escrow.js";
 import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
 import { requireEnv } from "../env.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
+import { getLiveTaskRecord } from "../chain/task-view.js";
 import {
   findWorkerByNullifier,
-  getTask,
   upsertProof,
 } from "../store.js";
 import { proofHash, serializeProofPayload, type ProofPayload } from "./payload.js";
@@ -183,8 +183,7 @@ export async function handleSubmitWork(
     return true;
   }
 
-  const task = await getTask(taskId);
-  if (!task) {
+  if (!(await getLiveTaskRecord(taskId, client))) {
     json(404, { error: "Task not found" });
     return true;
   }

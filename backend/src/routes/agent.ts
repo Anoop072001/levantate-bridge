@@ -1,19 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { actorFromAgent, requireAgentAuth } from "../auth/agent.js";
 import { pendingHandle } from "../relayer/submit.js";
-import {
-  appendAgentChatMessage,
-  createAgentChat,
-  deleteAgentChat,
-  getAgentChat,
-  listAgentChatMessages,
-  listAgentChats,
-  titleFromFirstMessage,
-  updateAgentChatStatus,
-  updateAgentChatTitle,
-} from "../agent/chat-store.js";
-import type { ChatMessage } from "../agent/chat.js";
-import type { AgentStep } from "../agent/tools.js";
-import { getTask, listBidsForTask } from "../store.js";
+import { getLiveTaskRecord } from "../chain/task-view.js";
+import { listBidsForTask } from "../store.js";
 import {
   checkAgentFunding,
   fundingHintPayload,
@@ -30,16 +19,18 @@ export async function handleAgentRoute(
   json: (status: number, payload: unknown) => void,
 ): Promise<boolean> {
   if (req.method === "GET" && url.pathname === "/api/agent/wallet") {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     try {
       const requiredParam = url.searchParams.get("requiredUsdc");
       const requiredMicro =
         requiredParam && Number(requiredParam) > 0
           ? BigInt(Math.round(Number(requiredParam) * 1_000_000))
           : 0n;
-      const { address, balanceMicro } = await readAgentUsdcBalance();
+      const { address, balanceMicro } = await readAgentUsdcBalance(agent.address as `0x${string}`);
       const check =
         requiredMicro > 0n
-          ? await checkAgentFunding(requiredMicro)
+          ? await checkAgentFunding(requiredMicro, address)
           : {
               agentAddress: address,
               balanceMicro,
@@ -74,6 +65,8 @@ export async function handleAgentRoute(
   }
 
   if (req.method === "POST" && url.pathname === "/api/agent/run-once") {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     try {
       const { runAgentCycle } = await import("../agent/runner.js");
       const result = await runAgentCycle();
@@ -84,152 +77,9 @@ export async function handleAgentRoute(
     return true;
   }
 
-  if (req.method === "GET" && url.pathname === "/api/agent/chat") {
-    const { isChatAvailable } = await import("../agent/chat.js");
-    json(200, { available: isChatAvailable() });
-    return true;
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/agent/chats") {
-    try {
-      json(200, { chats: await listAgentChats() });
-    } catch (err) {
-      json(500, { error: err instanceof Error ? err.message : "Failed to list chats" });
-    }
-    return true;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/agent/chats") {
-    const input = body as { title?: string };
-    try {
-      const chat = await createAgentChat(input.title?.trim() || "New chat");
-      json(201, { chat });
-    } catch (err) {
-      json(500, { error: err instanceof Error ? err.message : "Failed to create chat" });
-    }
-    return true;
-  }
-
-  const chatMatch = url.pathname.match(/^\/api\/agent\/chats\/([0-9a-f-]{36})$/);
-  if (chatMatch) {
-    const chatId = chatMatch[1]!;
-    if (req.method === "GET") {
-      try {
-        const chat = await getAgentChat(chatId);
-        if (!chat) {
-          json(404, { error: "Chat not found" });
-          return true;
-        }
-        const messages = await listAgentChatMessages(chatId);
-        json(200, { chat, messages });
-      } catch (err) {
-        json(500, { error: err instanceof Error ? err.message : "Failed to load chat" });
-      }
-      return true;
-    }
-    if (req.method === "DELETE") {
-      try {
-        await deleteAgentChat(chatId);
-        json(204, {});
-      } catch (err) {
-        json(500, { error: err instanceof Error ? err.message : "Failed to delete chat" });
-      }
-      return true;
-    }
-  }
-
-  const chatMessageMatch = url.pathname.match(/^\/api\/agent\/chats\/([0-9a-f-]{36})\/messages$/);
-  if (req.method === "POST" && chatMessageMatch) {
-    const chatId = chatMessageMatch[1]!;
-    const input = body as { content?: string };
-    const content = input.content?.trim();
-    if (!content) {
-      json(400, { error: "content required" });
-      return true;
-    }
-    const chatMod = await import("../agent/chat.js");
-    if (!chatMod.isChatAvailable()) {
-      json(503, { error: "Agent chat requires OPENAI_API_KEY in .env.local" });
-      return true;
-    }
-    try {
-      const chat = await getAgentChat(chatId);
-      if (!chat) {
-        json(404, { error: "Chat not found" });
-        return true;
-      }
-
-      const resumingFromIdle = chat.status === "idle";
-      await updateAgentChatStatus(chatId, "active");
-
-      const prior = await listAgentChatMessages(chatId);
-      const userMessage = await appendAgentChatMessage({
-        chatId,
-        role: "user",
-        content,
-      });
-
-      if (chat.title === "New chat" && prior.length === 0) {
-        await updateAgentChatTitle(chatId, titleFromFirstMessage(content));
-      }
-
-      const history: ChatMessage[] = [
-        ...prior.map((m) => ({ role: m.role, content: m.content })),
-        { role: "user", content },
-      ];
-      const turn = await chatMod.runChatTurn(history, { resumingFromIdle });
-
-      const steps: AgentStep[] = turn.steps;
-      const assistantMessage = await appendAgentChatMessage({
-        chatId,
-        role: "assistant",
-        content: turn.reply,
-        steps,
-      });
-
-      const postedTask = steps.some((s) => s.tool === "post_task" && s.ok);
-      if (postedTask) {
-        await updateAgentChatStatus(chatId, "idle");
-      }
-
-      const updatedChat = (await getAgentChat(chatId))!;
-
-      json(200, {
-        userMessage,
-        assistantMessage,
-        reply: turn.reply,
-        steps,
-        chatStatus: updatedChat.status,
-      });
-    } catch (err) {
-      json(502, { error: err instanceof Error ? err.message : "Agent chat failed" });
-    }
-    return true;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/agent/chat") {
-    const input = body as { messages?: ChatMessage[] };
-    const history = (input.messages ?? []).filter(
-      (m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
-    );
-    if (history.length === 0) {
-      json(400, { error: "messages required" });
-      return true;
-    }
-    const chatMod = await import("../agent/chat.js");
-    if (!chatMod.isChatAvailable()) {
-      json(503, { error: "Agent chat requires OPENAI_API_KEY in .env.local" });
-      return true;
-    }
-    try {
-      json(200, await chatMod.runChatTurn(history));
-    } catch (err) {
-      json(502, { error: err instanceof Error ? err.message : "Agent chat failed" });
-    }
-    return true;
-  }
-
   if (req.method === "POST" && url.pathname === "/api/agent/tasks") {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     const input = body as {
       description?: string;
       bidDeadlineSeconds?: number;
@@ -240,11 +90,14 @@ export async function handleAgentRoute(
       return true;
     }
     const { postTask } = await import("../agent/operations.js");
-    const result = await postTask({
-      description: input.description,
-      bidDeadlineSeconds: input.bidDeadlineSeconds ?? 3600,
-      submissionWindowSeconds: input.submissionWindowSeconds,
-    });
+    const result = await postTask(
+      {
+        description: input.description,
+        bidDeadlineSeconds: input.bidDeadlineSeconds ?? 3600,
+        submissionWindowSeconds: input.submissionWindowSeconds,
+      },
+      actorFromAgent(agent),
+    );
     if (!result.ok) {
       json(result.status, {
         error: result.error,
@@ -265,7 +118,7 @@ export async function handleAgentRoute(
   const scoreMatch = url.pathname.match(/^\/api\/agent\/tasks\/(\d+)\/score-bids$/);
   if (req.method === "GET" && scoreMatch) {
     const taskId = Number(scoreMatch[1]);
-    const stored = await getTask(taskId);
+    const stored = await getLiveTaskRecord(taskId);
     if (!stored) {
       json(404, { error: "Task not found" });
       return true;
@@ -288,4 +141,3 @@ export async function handleAgentRoute(
 
   return false;
 }
-

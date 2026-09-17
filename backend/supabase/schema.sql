@@ -18,8 +18,21 @@ create table if not exists tasks (
   submission_window text        not null,
   round             integer     not null,
   state             integer     not null,
+  poster            text,
   created_at        timestamptz not null default now()
 );
+
+create table if not exists agents (
+  id                uuid        primary key default gen_random_uuid(),
+  api_key_hash      text        not null unique,
+  circle_wallet_id  text        not null unique,
+  address           text        not null unique,
+  name              text        not null default 'agent',
+  created_at        timestamptz not null default now()
+);
+
+create index if not exists agents_api_key_hash_idx on agents (api_key_hash);
+create index if not exists agents_address_idx on agents (address);
 
 create table if not exists bids (
   id             integer     primary key,
@@ -94,6 +107,7 @@ create index if not exists pending_signals_expires_idx on pending_signals (expir
 
 alter table workers              enable row level security;
 alter table tasks                enable row level security;
+alter table agents               enable row level security;
 alter table bids                 enable row level security;
 alter table proofs               enable row level security;
 alter table relayed_transactions enable row level security;

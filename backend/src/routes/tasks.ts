@@ -6,7 +6,7 @@ import { handleSubmitWork } from "../proof/submit-work.js";
 import { readUsdcBalance } from "../chain/usdc-balance.js";
 import { createArcPublicClient, getEscrowAddress } from "../chain/escrow.js";
 import { nowSeconds, readOnChainTask } from "../chain/task-state.js";
-import { enrichAllTasks, enrichTaskWithActivity } from "../chain/task-view.js";
+import { enrichAllTasks, enrichTaskWithActivity, getLiveTaskRecord, listLiveTaskRecords } from "../chain/task-view.js";
 import { requireEnv } from "../env.js";
 import { enqueueContractCall, pendingHandle } from "../relayer/submit.js";
 import type { OpFailure } from "../agent/operations.js";
@@ -17,12 +17,11 @@ import {
   findWorkerByNullifier,
   getProof,
   getRelayedTransaction,
-  getTask,
   insertBid,
   insertWorker,
   listBidsForTask,
-  listTasks,
 } from "../store.js";
+import { actorFromAgent, requireAgentAuth } from "../auth/agent.js";
 import { verifySelfieCheck } from "../world-id/verify.js";
 
 /**
@@ -57,7 +56,7 @@ export async function handleTasksRoute(
   const relayerWalletId = requireEnv("CIRCLE_RELAYER_WALLET_ID");
 
   if (req.method === "GET" && url.pathname === "/api/tasks") {
-    const stored = await listTasks();
+    const stored = await listLiveTaskRecords(client);
     json(200, { tasks: await enrichAllTasks(stored, client) });
     return true;
   }
@@ -65,7 +64,7 @@ export async function handleTasksRoute(
   const taskDetailMatch = url.pathname.match(/^\/api\/tasks\/(\d+)$/);
   if (req.method === "GET" && taskDetailMatch) {
     const taskId = Number(taskDetailMatch[1]);
-    const stored = await getTask(taskId);
+    const stored = await getLiveTaskRecord(taskId, client);
     if (!stored) {
       json(404, { error: "Task not found" });
       return true;
@@ -83,6 +82,8 @@ export async function handleTasksRoute(
   }
 
   if (req.method === "POST" && url.pathname === "/api/tasks") {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     const input = body as {
       description?: string;
       maxBudget?: number;
@@ -95,12 +96,15 @@ export async function handleTasksRoute(
     }
 
     const { postTask } = await import("../agent/operations.js");
-    const result = await postTask({
-      description: input.description,
-      bidDeadlineSeconds: input.bidDeadlineSeconds,
-      submissionWindowSeconds: input.submissionWindowSeconds,
-      maxBudgetMicro: BigInt(input.maxBudget).toString(),
-    });
+    const result = await postTask(
+      {
+        description: input.description,
+        bidDeadlineSeconds: input.bidDeadlineSeconds,
+        submissionWindowSeconds: input.submissionWindowSeconds,
+        maxBudgetMicro: BigInt(input.maxBudget).toString(),
+      },
+      actorFromAgent(agent),
+    );
     if (!result.ok) {
       respondFailure(json, result);
       return true;
@@ -136,8 +140,7 @@ export async function handleTasksRoute(
       return true;
     }
 
-    const task = await getTask(taskId);
-    if (!task) {
+    if (!(await getLiveTaskRecord(taskId, client))) {
       json(404, { error: "Task not found" });
       return true;
     }
@@ -357,7 +360,7 @@ export async function handleTasksRoute(
   const bidsListMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/bids$/);
   if (req.method === "GET" && bidsListMatch) {
     const taskId = Number(bidsListMatch[1]);
-    if (!(await getTask(taskId))) {
+    if (!(await getLiveTaskRecord(taskId, client))) {
       json(404, { error: "Task not found" });
       return true;
     }
@@ -370,6 +373,8 @@ export async function handleTasksRoute(
 
   const selectMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/select$/);
   if (req.method === "POST" && selectMatch) {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     const taskId = Number(selectMatch[1]);
     const input = body as { bidId?: number };
     if (input.bidId === undefined) {
@@ -378,7 +383,7 @@ export async function handleTasksRoute(
     }
 
     const { selectWinner } = await import("../agent/operations.js");
-    const result = await selectWinner(taskId, input.bidId);
+    const result = await selectWinner(taskId, input.bidId, actorFromAgent(agent));
     if (!result.ok) {
       respondFailure(json, result);
       return true;
@@ -397,8 +402,10 @@ export async function handleTasksRoute(
 
   const approveMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/approve$/);
   if (req.method === "POST" && approveMatch) {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     const { approveWork } = await import("../agent/operations.js");
-    const result = await approveWork(Number(approveMatch[1]));
+    const result = await approveWork(Number(approveMatch[1]), actorFromAgent(agent));
     if (!result.ok) {
       respondFailure(json, result);
       return true;
@@ -409,8 +416,10 @@ export async function handleTasksRoute(
 
   const rejectMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/reject$/);
   if (req.method === "POST" && rejectMatch) {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     const { rejectWork } = await import("../agent/operations.js");
-    const result = await rejectWork(Number(rejectMatch[1]));
+    const result = await rejectWork(Number(rejectMatch[1]), actorFromAgent(agent));
     if (!result.ok) {
       respondFailure(json, result);
       return true;
@@ -421,6 +430,8 @@ export async function handleTasksRoute(
 
   const reclaimMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/reclaim$/);
   if (req.method === "POST" && reclaimMatch) {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     const taskId = Number(reclaimMatch[1]);
     const input = body as { newBidDeadlineSeconds?: number };
     if (!input.newBidDeadlineSeconds) {
@@ -429,7 +440,7 @@ export async function handleTasksRoute(
     }
 
     const { reclaimTask } = await import("../agent/operations.js");
-    const result = await reclaimTask(taskId, input.newBidDeadlineSeconds);
+    const result = await reclaimTask(taskId, input.newBidDeadlineSeconds, actorFromAgent(agent));
     if (!result.ok) {
       respondFailure(json, result);
       return true;
@@ -440,8 +451,10 @@ export async function handleTasksRoute(
 
   const cancelMatch = url.pathname.match(/^\/api\/tasks\/(\d+)\/cancel$/);
   if (req.method === "POST" && cancelMatch) {
+    const agent = await requireAgentAuth(req, json);
+    if (!agent) return true;
     const { cancelTask } = await import("../agent/operations.js");
-    const result = await cancelTask(Number(cancelMatch[1]));
+    const result = await cancelTask(Number(cancelMatch[1]), actorFromAgent(agent));
     if (!result.ok) {
       respondFailure(json, result);
       return true;

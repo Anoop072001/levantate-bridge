@@ -17,6 +17,7 @@ export interface TaskRecord {
   submissionWindow: string;
   round: number;
   state: number;
+  poster?: string;
   createdAt: string;
 }
 
@@ -72,6 +73,7 @@ interface TaskRow {
   submission_window: string;
   round: number;
   state: number;
+  poster: string | null;
   created_at: string;
 }
 
@@ -135,6 +137,7 @@ function toTask(row: TaskRow): TaskRecord {
     submissionWindow: row.submission_window,
     round: row.round,
     state: row.state,
+    poster: row.poster ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -328,6 +331,7 @@ export async function upsertTask(record: TaskRecord): Promise<void> {
       submission_window: record.submissionWindow,
       round: record.round,
       state: record.state,
+      poster: record.poster?.toLowerCase() ?? null,
       created_at: record.createdAt,
     },
     { onConflict: "id" },
@@ -353,6 +357,47 @@ export async function getTask(id: number): Promise<TaskRecord | undefined> {
     .maybeSingle<TaskRow>();
   if (error) fail("getTask", error);
   return data ? toTask(data) : undefined;
+}
+
+/** Drop bids/proofs that cannot exist on the current escrow (ids restart at 0 on redeploy). */
+export async function dropRowsFromPriorEscrow(
+  nextTaskId: number,
+  nextBidId: number,
+  liveTasks: Pick<TaskRecord, "id" | "createdAt">[],
+): Promise<void> {
+  const db = getSupabase();
+  const { error: bidRangeErr } = await db
+    .from("bids")
+    .delete()
+    .or(`task_id.gte.${nextTaskId},id.gte.${nextBidId}`);
+  if (bidRangeErr) fail("dropRowsFromPriorEscrow.bids", bidRangeErr);
+
+  const { error: proofRangeErr } = await db.from("proofs").delete().gte("task_id", nextTaskId);
+  if (proofRangeErr) fail("dropRowsFromPriorEscrow.proofs", proofRangeErr);
+
+  for (const task of liveTasks) {
+    const { error: oldBidErr } = await db
+      .from("bids")
+      .delete()
+      .eq("task_id", task.id)
+      .lt("created_at", task.createdAt);
+    if (oldBidErr) fail("dropRowsFromPriorEscrow.oldBids", oldBidErr);
+
+    const { error: oldProofErr } = await db
+      .from("proofs")
+      .delete()
+      .eq("task_id", task.id)
+      .lt("created_at", task.createdAt);
+    if (oldProofErr) fail("dropRowsFromPriorEscrow.oldProofs", oldProofErr);
+  }
+}
+
+export async function deleteBidsAndProofsForTask(taskId: number): Promise<void> {
+  const db = getSupabase();
+  const { error: bidErr } = await db.from("bids").delete().eq("task_id", taskId);
+  if (bidErr) fail("deleteBidsAndProofsForTask.bids", bidErr);
+  const { error: proofErr } = await db.from("proofs").delete().eq("task_id", taskId);
+  if (proofErr) fail("deleteProofsForTask", proofErr);
 }
 
 export async function insertBid(record: BidRecord): Promise<void> {
@@ -534,4 +579,77 @@ export async function getLatestConfirmedRelayForTask(
     .maybeSingle<RelayedRow>();
   if (error) fail("getLatestConfirmedRelayForTask", error);
   return data ? toRelayed(data) : undefined;
+}
+
+export interface AgentRecord {
+  id: string;
+  circleWalletId: string;
+  address: string;
+  name: string;
+  createdAt: string;
+}
+
+interface AgentRow {
+  id: string;
+  api_key_hash: string;
+  circle_wallet_id: string;
+  address: string;
+  name: string;
+  created_at: string;
+}
+
+function toAgent(row: AgentRow): AgentRecord {
+  return {
+    id: row.id,
+    circleWalletId: row.circle_wallet_id,
+    address: row.address,
+    name: row.name,
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertAgent(input: {
+  apiKeyHash: string;
+  circleWalletId: string;
+  address: string;
+  name: string;
+}): Promise<AgentRecord> {
+  const { data, error } = await getSupabase()
+    .from("agents")
+    .insert({
+      api_key_hash: input.apiKeyHash,
+      circle_wallet_id: input.circleWalletId,
+      address: input.address.toLowerCase(),
+      name: input.name,
+    })
+    .select("*")
+    .single<AgentRow>();
+  if (error) fail("insertAgent", error);
+  return toAgent(data);
+}
+
+export async function findAgentByApiKeyHash(apiKeyHash: string): Promise<AgentRecord | undefined> {
+  const { data, error } = await getSupabase()
+    .from("agents")
+    .select("*")
+    .eq("api_key_hash", apiKeyHash)
+    .maybeSingle<AgentRow>();
+  if (error) fail("findAgentByApiKeyHash", error);
+  return data ? toAgent(data) : undefined;
+}
+
+export async function findAgentById(id: string): Promise<AgentRecord | undefined> {
+  const { data, error } = await getSupabase().from("agents").select("*").eq("id", id).maybeSingle<AgentRow>();
+  if (error) fail("findAgentById", error);
+  return data ? toAgent(data) : undefined;
+}
+
+export async function findAgentByAddress(address: string): Promise<AgentRecord | undefined> {
+  const { data, error } = await getSupabase()
+    .from("agents")
+    .select("*")
+    .ilike("address", address)
+    .maybeSingle<AgentRow>();
+  if (error) fail("findAgentByAddress", error);
+  return data ? toAgent(data) : undefined;
 }

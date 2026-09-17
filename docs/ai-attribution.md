@@ -15,9 +15,8 @@ These are intentional features judges can exercise in the demo.
 
 | Tool | Model / SDK | Where | Purpose |
 | ---- | ----------- | ----- | ------- |
-| **OpenAI** | `gpt-4o` | `backend/src/agent/chat.ts`, `frontend/components/AgentChat.tsx` | Operator chat at `/agent` — tool calling for `post_task`, `select_winner`, `approve_work`, etc. |
+| **MCP** | External clients (Claude, ChatGPT, Cursor) | `backend/src/mcp/http.ts`, `backend/scripts/run-mcp.ts`, `backend/src/mcp/register.ts` | Streamable HTTP `/mcp` (OAuth or agent API key) or local stdio; tools spend **that** agent's Circle wallet. Operators do not use a website console. |
 | **OpenAI** or **Anthropic** | `gpt-4o` or `claude-sonnet-4-20250514` | `backend/src/agent/proof-evaluator.ts`, `backend/src/agent/runner.ts` | After worker submit: LLM reads task + proof (text or extracted PDF/Word/Excel) → APPROVE/REJECT recommendation |
-| **MCP (optional)** | External client (e.g. Claude Code) | `backend/scripts/run-mcp.ts`, `backend/src/mcp/register.ts` | Same escrow tools as `/agent`, for local operator use |
 
 **Not LLM-driven:** bid winner scoring (`backend/src/agent/score-bids.ts` — The Graph statistics), World ID verification, Circle/Arc settlement, subgraph indexing.
 
@@ -63,4 +62,4 @@ All changes were iteratively reviewed and run against real testnet/sandbox servi
 
 ## 5. Short statement for submission forms
 
-> **Product:** OpenAI GPT-4o powers the operator agent (`/agent`) and proof evaluation; Anthropic Claude is supported as an alternate evaluator. **Development:** Cursor AI assisted implementation and docs under human-written specs (`docs/spec.md`, `PLAN.md`, `AGENTS.md`). Integrations hit real Circle, World ID, Graph, and Arc testnet endpoints. AI assisted development; it did not replace human design, testing, or deployment decisions.
+> **Product:** Operators post and settle through MCP (Claude, ChatGPT, Cursor). OpenAI or Anthropic evaluates submitted proofs. **Development:** Cursor AI assisted implementation and docs under human-written specs (`docs/spec.md`, `PLAN.md`, `AGENTS.md`). Integrations hit real Circle, World ID, Graph, and Arc testnet endpoints. AI assisted development; it did not replace human design, testing, or deployment decisions.

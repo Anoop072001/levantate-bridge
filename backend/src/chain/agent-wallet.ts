@@ -1,6 +1,4 @@
 import { isAddress } from "viem";
-import { createCircleClient } from "../circle/client.js";
-import { requireEnv } from "../env.js";
 import { readUsdcBalance } from "./usdc-balance.js";
 
 export const ARC_USDC_FAUCET_URL = "https://faucet.circle.com";
@@ -42,38 +40,22 @@ export function insufficientFundingMessage(check: AgentFundingCheck): string {
   );
 }
 
-export async function resolveAgentWalletAddress(): Promise<`0x${string}`> {
-  for (const candidate of [
-    process.env.CIRCLE_AGENT_WALLET_ADDRESS,
-    process.env.DEPLOYER_AGENT_ADDRESS,
-  ]) {
-    const trimmed = candidate?.trim();
-    if (trimmed && isAddress(trimmed)) {
-      return trimmed as `0x${string}`;
-    }
+export async function readAgentUsdcBalance(
+  address: `0x${string}`,
+): Promise<{ address: `0x${string}`; balanceMicro: bigint }> {
+  if (!isAddress(address)) {
+    throw new Error("Invalid agent wallet address");
   }
-
-  const walletId = requireEnv("CIRCLE_AGENT_WALLET_ID");
-  const client = createCircleClient();
-  const res = await client.getWallet({ id: walletId });
-  const address = res.data?.wallet?.address;
-  if (!address || !isAddress(address)) {
-    throw new Error(
-      "Could not resolve agent wallet address — set CIRCLE_AGENT_WALLET_ADDRESS in .env.local",
-    );
-  }
-  return address as `0x${string}`;
-}
-
-export async function readAgentUsdcBalance(): Promise<{ address: `0x${string}`; balanceMicro: bigint }> {
-  const address = await resolveAgentWalletAddress();
   const balanceMicro = await readUsdcBalance(address);
   return { address, balanceMicro };
 }
 
-/** Returns whether the agent wallet holds at least `requiredMicro` USDC (6-decimal ERC-20). */
-export async function checkAgentFunding(requiredMicro: bigint): Promise<AgentFundingCheck> {
-  const { address, balanceMicro } = await readAgentUsdcBalance();
+/** Returns whether the given agent wallet holds at least `requiredMicro` USDC (6-decimal ERC-20). */
+export async function checkAgentFunding(
+  requiredMicro: bigint,
+  address: `0x${string}`,
+): Promise<AgentFundingCheck> {
+  const { balanceMicro } = await readAgentUsdcBalance(address);
   return {
     agentAddress: address,
     balanceMicro,

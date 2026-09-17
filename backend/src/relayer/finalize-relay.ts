@@ -1,5 +1,4 @@
 import { invalidateOnChainTaskCache } from "../chain/task-state.js";
-import { invalidateSubgraphTaskCache } from "../subgraph/tasks.js";
 import { waitForArcReceipt } from "../chain/wait-receipt.js";
 import { updateRelayedTransaction, type RelayedTransaction } from "../store.js";
 import { maybeDeleteSpentProofsForTask } from "../world-id/spent-proofs-cleanup.js";
@@ -14,7 +13,6 @@ async function markConfirmed(
 ): Promise<RelayedTransaction> {
   if (input.taskId !== undefined) {
     invalidateOnChainTaskCache(input.taskId);
-    invalidateSubgraphTaskCache();
   }
   const confirmed = await updateRelayedTransaction(relayId, {
     txHash,

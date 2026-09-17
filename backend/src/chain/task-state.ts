@@ -19,6 +19,7 @@ export interface OnChainTask {
   winningBidAmount: bigint;
   proofHash: `0x${string}`;
   currentRoundBidCount: bigint;
+  poster: `0x${string}`;
 }
 
 /** `tasks(uint256)` return tuple — the ABI is loaded from JSON, so viem cannot infer it. */
@@ -35,6 +36,7 @@ type TaskTuple = [
   winningBidAmount: bigint,
   proofHash: string,
   currentRoundBidCount: bigint,
+  poster: string,
 ];
 
 const rpcCache = new Map<number, { at: number; value: OnChainTask }>();
@@ -57,6 +59,7 @@ function parseTaskTuple(taskId: number, t: TaskTuple): OnChainTask {
     winningBidAmount: t[9],
     proofHash: t[10] as `0x${string}`,
     currentRoundBidCount: t[11],
+    poster: t[12] as `0x${string}`,
   };
 }
 
@@ -104,6 +107,24 @@ export async function readOnChainTask(
   client: PublicClient = createArcPublicClient(),
 ): Promise<OnChainTask> {
   return readOnChainTaskFromRpc(taskId, client);
+}
+
+/** Highest unused task id on the current escrow. Task ids restart at 0 on redeploy. */
+export async function readNextTaskId(
+  client: PublicClient = createArcPublicClient(),
+): Promise<number> {
+  const escrow = getEscrowContract(client);
+  const next = (await withRpcQueue(async () => escrow.read.nextTaskId())) as bigint;
+  return Number(next);
+}
+
+/** Highest unused bid id on the current escrow. Bid ids restart at 0 on redeploy. */
+export async function readNextBidId(
+  client: PublicClient = createArcPublicClient(),
+): Promise<number> {
+  const escrow = getEscrowContract(client);
+  const next = (await withRpcQueue(async () => escrow.read.nextBidId())) as bigint;
+  return Number(next);
 }
 
 export function peekCachedOnChainTask(taskId: number): OnChainTask | undefined {

@@ -10,16 +10,14 @@ contract DeployTaskEscrow is Script {
     function run() external returns (TaskEscrow escrow) {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
-        address agent = vm.envOr("DEPLOYER_AGENT_ADDRESS", deployer);
         address relayer = vm.envOr("DEPLOYER_RELAYER_ADDRESS", deployer);
 
         vm.startBroadcast(deployerKey);
-        escrow = new TaskEscrow(ARC_USDC, agent, relayer);
+        escrow = new TaskEscrow(ARC_USDC, relayer);
         vm.stopBroadcast();
 
         console2.log("TaskEscrow deployed at:", address(escrow));
         console2.log("USDC:", ARC_USDC);
-        console2.log("Agent:", agent);
         console2.log("Relayer:", relayer);
     }
 }

@@ -1,21 +1,17 @@
-import type OpenAI from "openai";
 import {
   ARC_USDC_FAUCET_URL,
   checkAgentFunding,
   fundingHintPayload,
   readAgentUsdcBalance,
   usdcMicroToNumber,
-  type AgentFundingHint,
 } from "../chain/agent-wallet.js";
 import { createArcPublicClient } from "../chain/escrow.js";
-import { enrichAllTasks, enrichTask } from "../chain/task-view.js";
+import { enrichAllTasks, enrichTask, getLiveTaskRecord, listLiveTaskRecords } from "../chain/task-view.js";
 import { relayChainStatus, transactionResponse } from "../relayer/submit.js";
 import {
   getProof,
   getRelayedTransaction,
-  getTask,
   listBidsForTask,
-  listTasks,
 } from "../store.js";
 import {
   approveWork,
@@ -24,30 +20,15 @@ import {
   reclaimTask,
   rejectWork,
   selectWinner,
+  transferAgentUsdc,
+  AGENT_TRANSFER_GAS_RESERVE_MICRO,
+  type AgentActor,
 } from "./operations.js";
 import { describeProofForAgent, evaluateProofRecord } from "../proof/evaluate-record.js";
 import { isProofEvaluationAvailable } from "./proof-evaluator.js";
 import { proofDownloadUrl } from "../proof/download-url.js";
 import { parseProofContent } from "../proof/payload.js";
 import { scoreBids } from "./score-bids.js";
-
-export interface AgentStepDownload {
-  label: string;
-  url: string;
-}
-
-export interface AgentStep {
-  tool: string;
-  args: Record<string, unknown>;
-  ok: boolean;
-  summary: string;
-  /** Relayed transactions this step produced, so the UI can track them to confirmation (D6). */
-  transactions: ReturnType<typeof transactionResponse>[];
-  /** Clickable file downloads surfaced after get_task or get_proof_download. */
-  downloads?: AgentStepDownload[];
-  /** Shown when post_task fails for insufficient agent USDC — copy address to fund. */
-  funding?: AgentFundingHint;
-}
 
 export interface AgentToolOutcome {
   ok: boolean;
@@ -69,7 +50,7 @@ function unixToIso(unix: string | bigint): string | null {
   return n > 0 ? new Date(n * 1000).toISOString() : null;
 }
 
-/** Wall-clock deadline context so the chat agent does not treat stale on-chain Assigned as in-window. */
+/** Wall-clock deadline context so MCP tools do not treat stale on-chain Assigned as in-window. */
 function agentDeadlineContext(
   state: number,
   bidDeadline: string,
@@ -116,230 +97,9 @@ function agentDeadlineContext(
   };
 }
 
-export function downloadsFromToolPayload(
-  tool: string,
-  payload: unknown,
-): AgentStepDownload[] {
-  if (!payload || typeof payload !== "object") return [];
-
-  if (tool === "get_task") {
-    const proof = (payload as { submitted_proof?: { kind?: string; fileName?: string; downloadUrl?: string } })
-      .submitted_proof;
-    if (proof?.kind === "file" && proof.downloadUrl) {
-      return [{ label: proof.fileName ?? "Submitted file", url: proof.downloadUrl }];
-    }
-    return [];
-  }
-
-  if (tool === "get_proof_download") {
-    const p = payload as { download_url?: string; file_name?: string };
-    if (p.download_url) {
-      return [{ label: p.file_name ?? "Submitted file", url: p.download_url }];
-    }
-  }
-
-  return [];
-}
-
-export const AGENT_OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
-  {
-    type: "function",
-    function: {
-      name: "list_tasks",
-      description:
-        "List every task with its authoritative on-chain state, budget, round, deadlines, and bid count.",
-      parameters: { type: "object", properties: {}, required: [] },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_task",
-      description:
-        "Full detail for one task: on-chain state, bids, and submitted proof content (including text extracted from uploaded Excel/PDF/Word files) when work was submitted or paid. File proofs include download_url for the original upload.",
-      parameters: {
-        type: "object",
-        properties: { task_id: { type: "integer" } },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "score_bids",
-      description:
-        "Score the current round's bids using live subgraph history (worker completion rate, missed deadlines, price fit) and return the recommended winner without assigning anything.",
-      parameters: {
-        type: "object",
-        properties: { task_id: { type: "integer" } },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_agent_wallet",
-      description:
-        "Show the Circle agent wallet address and USDC balance on Arc. Call before post_task if funding might be low.",
-      parameters: {
-        type: "object",
-        properties: {
-          required_usdc: {
-            type: "number",
-            description: "Optional task budget to compare against (plain USDC, e.g. 2.0).",
-          },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "post_task",
-      description:
-        "Escrow USDC and post a new task on-chain. Budget and submission window default to subgraph-derived medians when omitted.",
-      parameters: {
-        type: "object",
-        properties: {
-          description: { type: "string", description: "What the worker has to do." },
-          bid_deadline_minutes: {
-            type: "number",
-            description: "How long bidding stays open, in minutes.",
-          },
-          submission_window_minutes: {
-            type: "number",
-            description: "How long the assigned worker gets to submit, in minutes. Omit to use the subgraph median.",
-          },
-          max_budget_usdc: {
-            type: "number",
-            description: "Maximum payout in USDC. Omit to use the subgraph median.",
-          },
-        },
-        required: ["description", "bid_deadline_minutes"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "select_winner",
-      description:
-        "Assign a task to a bidder after the bid deadline. Omit bid_id to let subgraph-informed scoring pick the winner.",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "integer" },
-          bid_id: { type: "integer", description: "Optional explicit bid to accept." },
-        },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "evaluate_proof",
-      description:
-        "Run the LLM proof evaluator on submitted work for a task in Submitted or Paid state. Returns APPROVE/REJECT with a reason. Does not release payment — call approve_work or reject_work after the operator confirms.",
-      parameters: {
-        type: "object",
-        properties: { task_id: { type: "integer" } },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "approve_work",
-      description:
-        "Approve submitted work, releasing escrowed USDC to the worker's own address. Requires state Submitted.",
-      parameters: {
-        type: "object",
-        properties: { task_id: { type: "integer" } },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "reject_work",
-      description:
-        "Reject submitted work. The task returns to Assigned with a refreshed submission deadline so the worker can resubmit.",
-      parameters: {
-        type: "object",
-        properties: { task_id: { type: "integer" } },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "reclaim_task",
-      description:
-        "Reopen bidding on an Assigned task whose submission deadline passed. Escrow stays locked and the defaulting worker is barred from re-bidding.",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "integer" },
-          new_bid_deadline_minutes: { type: "number" },
-        },
-        required: ["task_id", "new_bid_deadline_minutes"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "cancel_task",
-      description:
-        "Close an Open or Bidding task and refund the escrowed USDC to the agent wallet.",
-      parameters: {
-        type: "object",
-        properties: { task_id: { type: "integer" } },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_proof_download",
-      description:
-        "Return a download link for the worker's uploaded proof file on a Submitted or Paid task. Use when the operator asks to download the submission.",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "integer" },
-          round: { type: "integer", description: "Task round. Omit for the current round." },
-        },
-        required: ["task_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_transaction",
-      description:
-        "Stored relayed transaction record. Status is confirmed or failed once Arc RPC returns a receipt.",
-      parameters: {
-        type: "object",
-        properties: { transaction_id: { type: "string" } },
-        required: ["transaction_id"],
-      },
-    },
-  },
-];
-
 async function taskSummaries() {
   const client = createArcPublicClient();
-  const stored = await listTasks();
+  const stored = await listLiveTaskRecords(client);
   const enriched = await enrichAllTasks(stored, client);
   return enriched.map((t) => ({
     task_id: t.id,
@@ -364,6 +124,7 @@ async function taskSummaries() {
 export async function runAgentTool(
   name: string,
   args: Record<string, unknown>,
+  actor: AgentActor,
 ): Promise<AgentToolOutcome> {
   switch (name) {
     case "list_tasks": {
@@ -378,7 +139,7 @@ export async function runAgentTool(
 
     case "get_task": {
       const taskId = Number(args.task_id);
-      const stored = await getTask(taskId);
+      const stored = await getLiveTaskRecord(taskId);
       if (!stored) {
         return { ok: false, summary: `Task ${taskId} not found`, payload: { error: "Task not found" }, transactions: [] };
       }
@@ -420,7 +181,7 @@ export async function runAgentTool(
 
     case "score_bids": {
       const taskId = Number(args.task_id);
-      const stored = await getTask(taskId);
+      const stored = await getLiveTaskRecord(taskId);
       if (!stored) {
         return { ok: false, summary: `Task ${taskId} not found`, payload: { error: "Task not found" }, transactions: [] };
       }
@@ -462,10 +223,10 @@ export async function runAgentTool(
         args.required_usdc === undefined
           ? 0n
           : BigInt(Math.round(Number(args.required_usdc) * 1_000_000));
-      const { address, balanceMicro } = await readAgentUsdcBalance();
+      const { address, balanceMicro } = await readAgentUsdcBalance(actor.address);
       const check =
         requiredMicro > 0n
-          ? await checkAgentFunding(requiredMicro)
+          ? await checkAgentFunding(requiredMicro, address)
           : {
               agentAddress: address,
               balanceMicro,
@@ -489,17 +250,78 @@ export async function runAgentTool(
       };
     }
 
+    case "transfer_usdc": {
+      const to = String(args.to ?? "");
+      const sendAll = args.send_all === true;
+      let amountMicro: bigint;
+      if (sendAll) {
+        const { balanceMicro } = await readAgentUsdcBalance(actor.address);
+        amountMicro = balanceMicro - AGENT_TRANSFER_GAS_RESERVE_MICRO;
+        if (amountMicro <= 0n) {
+          return {
+            ok: false,
+            summary: "Agent wallet has no transferable USDC after the 0.02 gas reserve",
+            payload: { error: "Insufficient USDC to transfer" },
+            transactions: [],
+          };
+        }
+      } else if (args.amount_usdc === undefined) {
+        return {
+          ok: false,
+          summary: "amount_usdc required unless send_all is true",
+          payload: { error: "amount_usdc required" },
+          transactions: [],
+        };
+      } else {
+        const n = Number(args.amount_usdc);
+        if (!Number.isFinite(n) || n <= 0) {
+          return {
+            ok: false,
+            summary: "amount_usdc must be a positive number",
+            payload: { error: "amount_usdc must be a positive number" },
+            transactions: [],
+          };
+        }
+        amountMicro = BigInt(toMicro(n));
+      }
+      const result = await transferAgentUsdc(to, amountMicro, actor);
+      if (!result.ok) {
+        return {
+          ok: false,
+          summary: result.error,
+          payload: {
+            error: result.error,
+            ...(result.funding ? { funding: result.funding } : {}),
+          },
+          transactions: result.transaction ? [transactionResponse(result.transaction)] : [],
+        };
+      }
+      return {
+        ok: true,
+        summary: `Sent ${usdc(result.amountMicro)} USDC to ${result.to} — ${relayChainStatus(result.transaction)}`,
+        payload: {
+          to: result.to,
+          amount_usdc: usdc(result.amountMicro),
+          status: relayChainStatus(result.transaction),
+        },
+        transactions: [transactionResponse(result.transaction)],
+      };
+    }
+
     case "post_task": {
-      const result = await postTask({
-        description: String(args.description ?? ""),
-        bidDeadlineSeconds: Math.round(Number(args.bid_deadline_minutes) * 60),
-        submissionWindowSeconds:
-          args.submission_window_minutes === undefined
-            ? undefined
-            : Math.round(Number(args.submission_window_minutes) * 60),
-        maxBudgetMicro:
-          args.max_budget_usdc === undefined ? undefined : toMicro(Number(args.max_budget_usdc)),
-      });
+      const result = await postTask(
+        {
+          description: String(args.description ?? ""),
+          bidDeadlineSeconds: Math.round(Number(args.bid_deadline_minutes) * 60),
+          submissionWindowSeconds:
+            args.submission_window_minutes === undefined
+              ? undefined
+              : Math.round(Number(args.submission_window_minutes) * 60),
+          maxBudgetMicro:
+            args.max_budget_usdc === undefined ? undefined : toMicro(Number(args.max_budget_usdc)),
+        },
+        actor,
+      );
       if (!result.ok) {
         return {
           ok: false,
@@ -540,6 +362,7 @@ export async function runAgentTool(
       const result = await selectWinner(
         taskId,
         args.bid_id === undefined ? undefined : Number(args.bid_id),
+        actor,
       );
       if (!result.ok) {
         return {
@@ -578,7 +401,7 @@ export async function runAgentTool(
           transactions: [],
         };
       }
-      const stored = await getTask(taskId);
+      const stored = await getLiveTaskRecord(taskId);
       if (!stored) {
         return { ok: false, summary: `Task ${taskId} not found`, payload: { error: "Task not found" }, transactions: [] };
       }
@@ -600,7 +423,7 @@ export async function runAgentTool(
           transactions: [],
         };
       }
-      const verdict = await evaluateProofRecord(stored.description, proof);
+      const verdict = await evaluateProofRecord(task.description, proof);
       return {
         ok: true,
         summary: `Task ${taskId}: ${verdict.approved ? "APPROVE" : "REJECT"} — ${verdict.reason}`,
@@ -618,7 +441,7 @@ export async function runAgentTool(
     case "reject_work": {
       const taskId = Number(args.task_id);
       const approve = name === "approve_work";
-      const result = approve ? await approveWork(taskId) : await rejectWork(taskId);
+      const result = approve ? await approveWork(taskId, actor) : await rejectWork(taskId, actor);
       if (!result.ok) {
         return {
           ok: false,
@@ -646,6 +469,7 @@ export async function runAgentTool(
       const result = await reclaimTask(
         taskId,
         Math.round(Number(args.new_bid_deadline_minutes) * 60),
+        actor,
       );
       if (!result.ok) {
         return {
@@ -669,7 +493,7 @@ export async function runAgentTool(
 
     case "cancel_task": {
       const taskId = Number(args.task_id);
-      const result = await cancelTask(taskId);
+      const result = await cancelTask(taskId, actor);
       if (!result.ok) {
         return {
           ok: false,
@@ -692,7 +516,7 @@ export async function runAgentTool(
 
     case "get_proof_download": {
       const taskId = Number(args.task_id);
-      const stored = await getTask(taskId);
+      const stored = await getLiveTaskRecord(taskId);
       if (!stored) {
         return { ok: false, summary: `Task ${taskId} not found`, payload: { error: "Task not found" }, transactions: [] };
       }

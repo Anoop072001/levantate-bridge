@@ -24,7 +24,7 @@ async function waitForTx(client: ReturnType<typeof createCircleClient>, txId: st
 }
 
 async function main() {
-  const agentWalletId = requireEnv("CIRCLE_AGENT_WALLET_ID");
+  const agentWalletId = process.env.CIRCLE_TRANSFER_WALLET_ID ?? requireEnv("CIRCLE_RELAYER_WALLET_ID");
   const recipient =
     process.env.CIRCLE_TRANSFER_RECIPIENT ??
     "0xC95ca8b8610A99314D27a923E580109FFeC4b3D1";

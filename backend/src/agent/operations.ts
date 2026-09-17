@@ -1,18 +1,21 @@
+import { getAddress, isAddress } from "viem";
 import {
   checkAgentFunding,
   fundingHintPayload,
   insufficientFundingMessage,
+  readAgentUsdcBalance,
+  usdcMicroToNumber,
   type AgentFundingHint,
 } from "../chain/agent-wallet.js";
 import { createArcPublicClient, getEscrowAddress, getUsdcAddress } from "../chain/escrow.js";
-import { invalidateOnChainTaskCache, nowSeconds, readOnChainTask } from "../chain/task-state.js";
-import { requireEnv } from "../env.js";
+import { invalidateOnChainTaskCache, nowSeconds, readNextTaskId, readOnChainTask } from "../chain/task-state.js";
+import { getLiveTaskRecord } from "../chain/task-view.js";
 import { verifyRelayEffectOnChain } from "../relayer/verify-on-chain.js";
 import { enqueueContractCall } from "../relayer/submit.js";
 import {
+  deleteBidsAndProofsForTask,
   getBid,
   getLatestConfirmedRelayForTask,
-  getTask,
   listBidsForTask,
   updateRelayedTransaction,
   upsertTask,
@@ -22,8 +25,8 @@ import { deriveTaskParams, type AgentTaskParams } from "./budget.js";
 import { scoreBids, type BidSelectionResult } from "./score-bids.js";
 
 /**
- * The escrow write path, guarded once. Every caller — HTTP routes, the autonomous loop, and the
- * chat agent — goes through here so task-state rules cannot drift between entry points.
+ * The escrow write path, guarded once. Every caller — HTTP routes, the autonomous loop, and MCP
+ * tools — goes through here so task-state rules cannot drift between entry points.
  */
 
 export interface OpFailure {
@@ -39,9 +42,29 @@ export interface OpFailure {
 
 export type OpResult<T> = ({ ok: true } & T) | OpFailure;
 
-const NEXT_ID_ABI = [
-  { name: "nextTaskId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-] as const;
+export interface AgentActor {
+  walletId: string;
+  address: `0x${string}`;
+}
+
+function notPoster(): OpFailure {
+  return { ok: false, status: 403, error: "Only the task poster can perform this action" };
+}
+
+async function assertPoster(taskId: number, actor: AgentActor): Promise<OpFailure | null> {
+  const onChain = await readOnChainTask(taskId);
+  if (onChain.poster.toLowerCase() !== actor.address.toLowerCase()) {
+    return notPoster();
+  }
+  return null;
+}
+
+async function ensureLiveTask(taskId: number): Promise<OpFailure | null> {
+  if (!(await getLiveTaskRecord(taskId))) {
+    return { ok: false, status: 404, error: "Task not found" };
+  }
+  return null;
+}
 
 function failed(tx: RelayedTransaction, label: string): OpFailure {
   return { ok: false, status: 502, error: tx.error ?? `${label} failed`, transaction: tx };
@@ -66,7 +89,10 @@ export interface PostedTask {
   transactions: RelayedTransaction[];
 }
 
-export async function postTask(input: PostTaskInput): Promise<OpResult<{ task: PostedTask }>> {
+export async function postTask(
+  input: PostTaskInput,
+  actor: AgentActor,
+): Promise<OpResult<{ task: PostedTask }>> {
   const description = input.description.trim();
   if (!description) {
     return { ok: false, status: 400, error: "description required" };
@@ -77,7 +103,7 @@ export async function postTask(input: PostTaskInput): Promise<OpResult<{ task: P
 
   const client = createArcPublicClient();
   const escrowAddress = getEscrowAddress();
-  const agentWalletId = requireEnv("CIRCLE_AGENT_WALLET_ID");
+  const agentWalletId = actor.walletId;
 
   // The Graph sets the numbers the agent cannot know on its own (D1).
   const needsDerived =
@@ -97,19 +123,14 @@ export async function postTask(input: PostTaskInput): Promise<OpResult<{ task: P
 
   const bidDeadline = nowSeconds() + BigInt(Math.floor(input.bidDeadlineSeconds));
 
-  const nextId = (await client.readContract({
-    address: escrowAddress,
-    abi: NEXT_ID_ABI,
-    functionName: "nextTaskId",
-  })) as bigint;
-  const taskId = Number(nextId);
+  const taskId = await readNextTaskId(client);
 
   console.log(
     `[agent] posting task ${taskId} — budget=${maxBudget}, submissionWindow=${submissionWindow}, ` +
       `medianPaid=${derived?.reasoning.medianPaidAmount ?? "explicit"}`,
   );
 
-  const funding = await checkAgentFunding(maxBudget);
+  const funding = await checkAgentFunding(maxBudget, actor.address);
   if (!funding.sufficient) {
     return {
       ok: false,
@@ -146,6 +167,7 @@ export async function postTask(input: PostTaskInput): Promise<OpResult<{ task: P
   });
   if (postTx.status === "failed") return failed(postTx, "postTask");
 
+  const createdAt = new Date().toISOString();
   await upsertTask({
     id: taskId,
     description,
@@ -154,8 +176,10 @@ export async function postTask(input: PostTaskInput): Promise<OpResult<{ task: P
     submissionWindow: submissionWindow.toString(),
     round: 0,
     state: 0,
-    createdAt: new Date().toISOString(),
+    poster: actor.address.toLowerCase(),
+    createdAt,
   });
+  await deleteBidsAndProofsForTask(taskId);
 
   return {
     ok: true,
@@ -208,11 +232,13 @@ async function alreadyAssignedWinnerResult(taskId: number): Promise<SelectWinner
  */
 export async function selectWinner(
   taskId: number,
-  bidId?: number,
+  bidId: number | undefined,
+  actor: AgentActor,
 ): Promise<OpResult<SelectWinnerResult>> {
-  if (!(await getTask(taskId))) {
-    return { ok: false, status: 404, error: "Task not found" };
-  }
+  const missing = await ensureLiveTask(taskId);
+  if (missing) return missing;
+  const posterErr = await assertPoster(taskId, actor);
+  if (posterErr) return posterErr;
 
   invalidateOnChainTaskCache(taskId);
   const onChain = await readOnChainTask(taskId);
@@ -255,7 +281,7 @@ export async function selectWinner(
   }
 
   const tx = await enqueueContractCall({
-    walletId: requireEnv("CIRCLE_AGENT_WALLET_ID"),
+    walletId: actor.walletId,
     kind: "select_winner",
     expectedEvent: "WorkerAssigned",
     contractAddress: getEscrowAddress(),
@@ -302,10 +328,12 @@ export async function selectWinner(
 async function settleSubmittedWork(
   taskId: number,
   approve: boolean,
+  actor: AgentActor,
 ): Promise<OpResult<{ transaction: RelayedTransaction }>> {
-  if (!(await getTask(taskId))) {
-    return { ok: false, status: 404, error: "Task not found" };
-  }
+  const missing = await ensureLiveTask(taskId);
+  if (missing) return missing;
+  const posterErr = await assertPoster(taskId, actor);
+  if (posterErr) return posterErr;
 
   const onChain = await readOnChainTask(taskId);
   if (onChain.state !== 3) {
@@ -319,7 +347,7 @@ async function settleSubmittedWork(
 
   const label = approve ? "approveWork" : "rejectWork";
   const tx = await enqueueContractCall({
-    walletId: requireEnv("CIRCLE_AGENT_WALLET_ID"),
+    walletId: actor.walletId,
     kind: approve ? "approve_work" : "reject_work",
     expectedEvent: approve ? "PaymentReleased" : "WorkRejected",
     contractAddress: getEscrowAddress(),
@@ -335,27 +363,30 @@ async function settleSubmittedWork(
 }
 
 /** Releases escrowed USDC to the worker's self-custodied address. */
-export function approveWork(taskId: number) {
-  return settleSubmittedWork(taskId, true);
+export function approveWork(taskId: number, actor: AgentActor) {
+  return settleSubmittedWork(taskId, true, actor);
 }
 
 /** Sends the task back to Assigned with a refreshed submission deadline (D5). */
-export function rejectWork(taskId: number) {
-  return settleSubmittedWork(taskId, false);
+export function rejectWork(taskId: number, actor: AgentActor) {
+  return settleSubmittedWork(taskId, false, actor);
 }
 
 /** Reopens bidding after a missed submission deadline. Escrow stays locked (D5). */
 export async function reclaimTask(
   taskId: number,
   newBidDeadlineSeconds: number,
+  actor: AgentActor,
 ): Promise<OpResult<{ transaction: RelayedTransaction; round: number }>> {
   if (!Number.isFinite(newBidDeadlineSeconds) || newBidDeadlineSeconds <= 0) {
     return { ok: false, status: 400, error: "newBidDeadlineSeconds must be a positive number" };
   }
-  const stored = await getTask(taskId);
+  const stored = await getLiveTaskRecord(taskId);
   if (!stored) {
     return { ok: false, status: 404, error: "Task not found" };
   }
+  const posterErr = await assertPoster(taskId, actor);
+  if (posterErr) return posterErr;
 
   const onChain = await readOnChainTask(taskId);
   if (onChain.state !== 2) {
@@ -367,7 +398,7 @@ export async function reclaimTask(
 
   const newBidDeadline = nowSeconds() + BigInt(Math.floor(newBidDeadlineSeconds));
   const tx = await enqueueContractCall({
-    walletId: requireEnv("CIRCLE_AGENT_WALLET_ID"),
+    walletId: actor.walletId,
     kind: "reclaim_task",
     expectedEvent: "TaskReclaimed",
     contractAddress: getEscrowAddress(),
@@ -395,10 +426,12 @@ export async function reclaimTask(
  */
 export async function cancelTask(
   taskId: number,
+  actor: AgentActor,
 ): Promise<OpResult<{ transaction: RelayedTransaction; aborted: boolean }>> {
-  if (!(await getTask(taskId))) {
-    return { ok: false, status: 404, error: "Task not found" };
-  }
+  const missing = await ensureLiveTask(taskId);
+  if (missing) return missing;
+  const posterErr = await assertPoster(taskId, actor);
+  if (posterErr) return posterErr;
 
   const onChain = await readOnChainTask(taskId);
   if (onChain.state !== 0 && onChain.state !== 1) {
@@ -412,7 +445,7 @@ export async function cancelTask(
   const aborted = onChain.currentRoundBidCount > 0n || nowSeconds() <= onChain.bidDeadline;
   const label = aborted ? "abortTask" : "cancelTask";
   const tx = await enqueueContractCall({
-    walletId: requireEnv("CIRCLE_AGENT_WALLET_ID"),
+    walletId: actor.walletId,
     kind: aborted ? "abort_task" : "cancel_task",
     expectedEvent: "TaskCancelled",
     contractAddress: getEscrowAddress(),
@@ -424,4 +457,58 @@ export async function cancelTask(
   if (tx.status === "failed") return failed(tx, label);
 
   return { ok: true, transaction: tx, aborted };
+}
+
+/** Native gas on Arc is USDC — leave a reserve so the ERC-20 transfer does not strand the wallet. */
+export const AGENT_TRANSFER_GAS_RESERVE_MICRO = 20_000n;
+
+/**
+ * Send USDC from this agent's Circle wallet to a self-custodied address.
+ * Worker earnings are never held here — this only moves the poster's unused float.
+ */
+export async function transferAgentUsdc(
+  toRaw: string,
+  amountMicro: bigint,
+  actor: AgentActor,
+): Promise<OpResult<{ transaction: RelayedTransaction; to: `0x${string}`; amountMicro: bigint }>> {
+  if (!isAddress(toRaw)) {
+    return { ok: false, status: 400, error: "Invalid recipient address" };
+  }
+  const to = getAddress(toRaw);
+  if (to === "0x0000000000000000000000000000000000000000") {
+    return { ok: false, status: 400, error: "Cannot send to the zero address" };
+  }
+  if (to.toLowerCase() === actor.address.toLowerCase()) {
+    return { ok: false, status: 400, error: "Recipient is this agent's Circle wallet — pick an external address" };
+  }
+  if (amountMicro <= 0n) {
+    return { ok: false, status: 400, error: "amount must be greater than zero" };
+  }
+
+  const { balanceMicro } = await readAgentUsdcBalance(actor.address);
+  const needed = amountMicro + AGENT_TRANSFER_GAS_RESERVE_MICRO;
+  if (balanceMicro < needed) {
+    const check = await checkAgentFunding(needed, actor.address);
+    return {
+      ok: false,
+      status: 402,
+      error:
+        `Need ${usdcMicroToNumber(needed).toFixed(2)} USDC to send ${usdcMicroToNumber(amountMicro).toFixed(2)} USDC ` +
+        `(keeps a 0.02 USDC gas reserve). Balance: ${usdcMicroToNumber(balanceMicro).toFixed(2)} USDC.`,
+      funding: fundingHintPayload(check),
+    };
+  }
+
+  const tx = await enqueueContractCall({
+    walletId: actor.walletId,
+    kind: "usdc_transfer",
+    expectedEvent: "Transfer",
+    contractAddress: getUsdcAddress(),
+    abiFunctionSignature: "transfer(address,uint256)",
+    abiParameters: [to, amountMicro.toString()],
+    worker: to,
+  });
+  if (tx.status === "failed") return failed(tx, "USDC transfer");
+
+  return { ok: true, transaction: tx, to, amountMicro };
 }

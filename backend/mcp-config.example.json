@@ -3,7 +3,9 @@
     "levantate-bridge": {
       "command": "npm",
       "args": ["run", "mcp", "--prefix", "/absolute/path/to/levantate-bridge/backend"],
-      "env": {}
+      "env": {
+        "LEVANTATE_AGENT_API_KEY": "lb_paste_key_from_register"
+      }
     }
   }
 }

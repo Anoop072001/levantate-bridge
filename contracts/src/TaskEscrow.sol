@@ -6,6 +6,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 /// @title TaskEscrow
 /// @notice USDC escrow for Levantate Bridge task marketplace on Arc testnet.
+/// @dev Any funded address may post a task; only that poster may settle it. The relayer
+///      submits worker bids and proofs so workers never need gas.
 contract TaskEscrow is ReentrancyGuard {
     enum TaskState {
         Open,
@@ -29,6 +31,7 @@ contract TaskEscrow is ReentrancyGuard {
         uint256 winningBidAmount;
         bytes32 proofHash;
         uint256 currentRoundBidCount;
+        address poster;
     }
 
     struct Bid {
@@ -39,7 +42,6 @@ contract TaskEscrow is ReentrancyGuard {
     }
 
     IERC20 public immutable usdc;
-    address public immutable agent;
     address public immutable relayer;
 
     uint256 public nextTaskId;
@@ -53,7 +55,7 @@ contract TaskEscrow is ReentrancyGuard {
 
     event TaskPosted(
         uint256 indexed taskId,
-        address indexed agent,
+        address indexed poster,
         uint256 maxBudget,
         uint256 bidDeadline,
         uint256 submissionWindow,
@@ -95,7 +97,7 @@ contract TaskEscrow is ReentrancyGuard {
     event PaymentReleased(
         uint256 indexed taskId,
         address indexed worker,
-        address indexed agent,
+        address indexed poster,
         uint256 workerAmount,
         uint256 refundAmount,
         uint256 round
@@ -110,12 +112,12 @@ contract TaskEscrow is ReentrancyGuard {
 
     event TaskCancelled(
         uint256 indexed taskId,
-        address indexed agent,
+        address indexed poster,
         uint256 refundAmount,
         uint256 round
     );
 
-    error NotAgent();
+    error NotPoster();
     error NotRelayer();
     error InvalidState();
     error BidDeadlinePassed();
@@ -129,8 +131,8 @@ contract TaskEscrow is ReentrancyGuard {
     error ZeroBudget();
     error DuplicateBidAmount();
 
-    modifier onlyAgent() {
-        if (msg.sender != agent) revert NotAgent();
+    modifier onlyPoster(uint256 taskId) {
+        if (msg.sender != tasks[taskId].poster) revert NotPoster();
         _;
     }
 
@@ -139,9 +141,8 @@ contract TaskEscrow is ReentrancyGuard {
         _;
     }
 
-    constructor(address usdcToken, address agentAddress, address relayerAddress) {
+    constructor(address usdcToken, address relayerAddress) {
         usdc = IERC20(usdcToken);
-        agent = agentAddress;
         relayer = relayerAddress;
     }
 
@@ -150,7 +151,7 @@ contract TaskEscrow is ReentrancyGuard {
         uint256 maxBudget,
         uint256 bidDeadline,
         uint256 submissionWindow
-    ) external onlyAgent returns (uint256 taskId) {
+    ) external returns (uint256 taskId) {
         if (maxBudget == 0) revert ZeroBudget();
         if (bidDeadline <= block.timestamp) revert BidDeadlinePassed();
 
@@ -162,12 +163,13 @@ contract TaskEscrow is ReentrancyGuard {
         task.submissionWindow = submissionWindow;
         task.round = 0;
         task.state = TaskState.Open;
+        task.poster = msg.sender;
 
-        bool ok = usdc.transferFrom(agent, address(this), maxBudget);
+        bool ok = usdc.transferFrom(msg.sender, address(this), maxBudget);
         require(ok, "USDC transfer failed");
 
         emit TaskPosted(
-            taskId, agent, maxBudget, bidDeadline, submissionWindow, task.round, description
+            taskId, msg.sender, maxBudget, bidDeadline, submissionWindow, task.round, description
         );
     }
 
@@ -198,7 +200,7 @@ contract TaskEscrow is ReentrancyGuard {
         emit BidPlaced(taskId, bidId, worker, amount, task.round);
     }
 
-    function selectWinner(uint256 taskId, uint256 bidId) external onlyAgent {
+    function selectWinner(uint256 taskId, uint256 bidId) external onlyPoster(taskId) {
         Task storage task = tasks[taskId];
         if (task.state != TaskState.Bidding) revert InvalidState();
         if (block.timestamp <= task.bidDeadline) revert BidDeadlineNotReached();
@@ -228,11 +230,12 @@ contract TaskEscrow is ReentrancyGuard {
         emit WorkSubmitted(taskId, task.assignedWorker, proofHash, task.round);
     }
 
-    function approveWork(uint256 taskId) external onlyAgent nonReentrant {
+    function approveWork(uint256 taskId) external onlyPoster(taskId) nonReentrant {
         Task storage task = tasks[taskId];
         if (task.state != TaskState.Submitted) revert InvalidState();
 
         address worker = task.assignedWorker;
+        address poster = task.poster;
         uint256 workerAmount = task.winningBidAmount;
         uint256 refundAmount = task.maxBudget - workerAmount;
 
@@ -241,14 +244,14 @@ contract TaskEscrow is ReentrancyGuard {
         bool paidWorker = usdc.transfer(worker, workerAmount);
         require(paidWorker, "worker payout failed");
         if (refundAmount > 0) {
-            bool refunded = usdc.transfer(agent, refundAmount);
-            require(refunded, "agent refund failed");
+            bool refunded = usdc.transfer(poster, refundAmount);
+            require(refunded, "poster refund failed");
         }
 
-        emit PaymentReleased(taskId, worker, agent, workerAmount, refundAmount, task.round);
+        emit PaymentReleased(taskId, worker, poster, workerAmount, refundAmount, task.round);
     }
 
-    function rejectWork(uint256 taskId) external onlyAgent {
+    function rejectWork(uint256 taskId) external onlyPoster(taskId) {
         Task storage task = tasks[taskId];
         if (task.state != TaskState.Submitted) revert InvalidState();
 
@@ -259,7 +262,7 @@ contract TaskEscrow is ReentrancyGuard {
         emit WorkRejected(taskId, task.assignedWorker, task.submissionDeadline, task.round);
     }
 
-    function reclaimTask(uint256 taskId, uint256 newBidDeadline) external onlyAgent {
+    function reclaimTask(uint256 taskId, uint256 newBidDeadline) external onlyPoster(taskId) {
         Task storage task = tasks[taskId];
         if (task.state != TaskState.Assigned) revert InvalidState();
         if (block.timestamp <= task.submissionDeadline) revert SubmissionDeadlineNotReached();
@@ -281,7 +284,7 @@ contract TaskEscrow is ReentrancyGuard {
         emit TaskReclaimed(taskId, defaultingWorker, task.round, newBidDeadline);
     }
 
-    function cancelTask(uint256 taskId) external onlyAgent nonReentrant {
+    function cancelTask(uint256 taskId) external onlyPoster(taskId) nonReentrant {
         Task storage task = tasks[taskId];
         if (task.state != TaskState.Open && task.state != TaskState.Bidding) {
             revert InvalidState();
@@ -290,27 +293,29 @@ contract TaskEscrow is ReentrancyGuard {
         if (task.currentRoundBidCount != 0) revert NoBidsInRound();
 
         uint256 refundAmount = task.maxBudget;
+        address poster = task.poster;
         task.state = TaskState.Cancelled;
 
-        bool refunded = usdc.transfer(agent, refundAmount);
+        bool refunded = usdc.transfer(poster, refundAmount);
         require(refunded, "cancel refund failed");
 
-        emit TaskCancelled(taskId, agent, refundAmount, task.round);
+        emit TaskCancelled(taskId, poster, refundAmount, task.round);
     }
 
-    /// @notice Agent aborts a task in Open/Bidding and refunds escrow even when bids exist.
-    function abortTask(uint256 taskId) external onlyAgent nonReentrant {
+    /// @notice Poster aborts a task in Open/Bidding and refunds escrow even when bids exist.
+    function abortTask(uint256 taskId) external onlyPoster(taskId) nonReentrant {
         Task storage task = tasks[taskId];
         if (task.state != TaskState.Open && task.state != TaskState.Bidding) {
             revert InvalidState();
         }
 
         uint256 refundAmount = task.maxBudget;
+        address poster = task.poster;
         task.state = TaskState.Cancelled;
 
-        bool refunded = usdc.transfer(agent, refundAmount);
+        bool refunded = usdc.transfer(poster, refundAmount);
         require(refunded, "abort refund failed");
 
-        emit TaskCancelled(taskId, agent, refundAmount, task.round);
+        emit TaskCancelled(taskId, poster, refundAmount, task.round);
     }
 }

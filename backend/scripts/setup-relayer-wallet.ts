@@ -35,7 +35,7 @@ async function main() {
 
   console.log("Created relayer wallet:", relayer.id, relayer.address);
   console.log("Fund with testnet USDC from https://faucet.circle.com (Arc Testnet)");
-  console.log("Redeploy escrow with DEPLOYER_AGENT_ADDRESS and DEPLOYER_RELAYER_ADDRESS set to Circle wallet addresses.");
+  console.log("Escrow constructor is (usdc, relayer) — set DEPLOYER_RELAYER_ADDRESS to this address on deploy.");
 }
 
 main().catch((err) => {

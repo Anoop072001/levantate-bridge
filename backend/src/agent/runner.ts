@@ -1,15 +1,17 @@
+import { actorFromAgent } from "../auth/agent.js";
 import { createArcPublicClient } from "../chain/escrow.js";
 import { invalidateOnChainTaskCache, nowSeconds, readOnChainTask } from "../chain/task-state.js";
+import { listLiveTaskRecords } from "../chain/task-view.js";
 import {
+  findAgentByAddress,
   getProof,
-  getTask,
   listBidsForTask,
   listInFlightRelaysForTask,
-  listTasks,
   type BidRecord,
   type RelayedTransaction,
 } from "../store.js";
 import { isProofEvaluationAvailable } from "./proof-evaluator.js";
+import type { AgentActor } from "./operations.js";
 
 export interface AgentAction {
   kind: "select_winner" | "approve_work" | "reject_work";
@@ -24,9 +26,25 @@ export interface AgentRunResult {
   timestamp: string;
 }
 
+async function actorForTask(taskId: number): Promise<AgentActor | undefined> {
+  const onChain = await readOnChainTask(taskId);
+  const poster = onChain.poster;
+  if (!poster) return undefined;
+  const agent = await findAgentByAddress(poster);
+  if (!agent) {
+    console.warn(`[agent] task ${taskId} has poster ${poster} with no registered Circle wallet`);
+    return undefined;
+  }
+  return actorFromAgent(agent);
+}
+
 async function assignWinner(taskId: number): Promise<AgentAction> {
+  const actor = await actorForTask(taskId);
+  if (!actor) {
+    return { kind: "select_winner", taskId, reasoning: {}, error: "No registered agent wallet for this task poster" };
+  }
   const { selectWinner } = await import("./operations.js");
-  const result = await selectWinner(taskId);
+  const result = await selectWinner(taskId, undefined, actor);
   if (!result.ok) {
     return {
       kind: "select_winner",
@@ -49,11 +67,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
-  const stored = await getTask(taskId);
-  if (!stored) {
-    return { kind: "approve_work", taskId, reasoning: {}, error: "Task not in store" };
-  }
-
   const onChain = await readOnChainTask(taskId);
   const proof = await getProof(taskId, onChain.round);
   if (!proof) {
@@ -63,7 +76,7 @@ async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
   let verdict;
   try {
     const { evaluateProofRecord } = await import("../proof/evaluate-record.js");
-    verdict = await evaluateProofRecord(stored.description, proof);
+    verdict = await evaluateProofRecord(onChain.description, proof);
   } catch (err) {
     return {
       kind: "approve_work",
@@ -78,8 +91,17 @@ async function evaluateSubmittedTask(taskId: number): Promise<AgentAction> {
   );
 
   const kind = verdict.approved ? "approve_work" : "reject_work";
+  const actor = await actorForTask(taskId);
+  if (!actor) {
+    return {
+      kind: "approve_work",
+      taskId,
+      reasoning: { verdict },
+      error: "No registered agent wallet for this task poster",
+    };
+  }
   const { approveWork, rejectWork } = await import("./operations.js");
-  const result = verdict.approved ? await approveWork(taskId) : await rejectWork(taskId);
+  const result = verdict.approved ? await approveWork(taskId, actor) : await rejectWork(taskId, actor);
 
   return {
     kind,
@@ -146,7 +168,7 @@ export async function reviewSubmittedTask(taskId: number): Promise<AgentAction |
 /** Select winners for tasks whose bid deadline passed. Runs by default; proof review stays manual. */
 export async function runWinnerSelectionCycle(): Promise<AgentRunResult> {
   const actions: AgentAction[] = [];
-  const stored = await listTasks();
+  const stored = await listLiveTaskRecords();
 
   for (const task of stored) {
     try {
@@ -168,7 +190,7 @@ export async function runWinnerSelectionCycle(): Promise<AgentRunResult> {
 async function runProofReviewCycle(): Promise<AgentAction[]> {
   const actions: AgentAction[] = [];
   const client = createArcPublicClient();
-  const stored = await listTasks();
+  const stored = await listLiveTaskRecords(client);
 
   for (const task of stored) {
     const onChain = await readOnChainTask(task.id, client);

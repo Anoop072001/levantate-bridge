@@ -1,6 +1,6 @@
 # Circle + Arc — integration reference
 
-All settlement is **USDC on Arc testnet** via Circle **Developer-Controlled Wallets**. The backend holds two wallets only: the **agent** (funds escrow) and the **relayer** (submits worker transactions so workers never need gas).
+All settlement is **USDC on Arc testnet** via Circle **Developer-Controlled Wallets**. The backend holds a **wallet set**: each requesting AI registers its own DCW that funds escrow, plus **one shared relayer** (submits worker transactions so workers never need gas).
 
 **Start here if you are reviewing Circle / Arc integration.**
 
@@ -8,7 +8,7 @@ All settlement is **USDC on Arc testnet** via Circle **Developer-Controlled Wall
 
 | Wallet | Role | On-chain calls |
 | ------ | ---- | -------------- |
-| **Agent wallet** | Funds escrow, settles tasks | `postTask`, `selectWinner`, `approveWork`, `rejectWork`, `reclaimTask`, `cancelTask` / `abortTask`, USDC `approve` |
+| **Per-agent wallet** | Funds that AI's escrow, settles its tasks | `postTask`, `selectWinner`, `approveWork`, `rejectWork`, `reclaimTask`, `cancelTask` / `abortTask`, USDC `approve` |
 | **Relayer wallet** | Gasless worker writes | `placeBid`, `submitWork` |
 
 Workers receive USDC directly at their **self-custodied** payout address on `approveWork` → `PaymentReleased`.
@@ -30,7 +30,7 @@ export function createCircleClient() {
 }
 ```
 
-Wallet setup scripts: `backend/scripts/setup-wallets.ts`, `backend/scripts/setup-relayer-wallet.ts`.
+Wallet setup scripts: `backend/scripts/setup-wallets.ts` (wallet set), `backend/scripts/setup-relayer-wallet.ts`. Agents mint wallets at `POST /api/agents/register`.
 
 ### Contract execution + receipt wait
 
@@ -67,13 +67,13 @@ export async function waitForArcReceipt(txHash: string): Promise<"confirmed" | "
 
 Startup recovery for stuck rows: `backend/src/relayer/reconcile.ts`.
 
-### Agent escrow writes (Circle agent wallet)
+### Agent escrow writes (caller's Circle wallet)
 
-`backend/src/agent/operations.ts` — post task, select winner, approve/reject, reclaim, cancel:
+`backend/src/agent/operations.ts` — post task, select winner, approve/reject, reclaim, cancel — all take an `AgentActor` (`walletId` + `address`). Winner/proof loops look up the task poster and submit with **that** wallet.
 
 ```typescript
 const postTx = await enqueueContractCall({
-  walletId: agentWalletId,
+  walletId: actor.walletId,
   kind: "post_task",
   expectedEvent: "TaskPosted",
   contractAddress: escrowAddress,
@@ -84,7 +84,7 @@ const postTx = await enqueueContractCall({
 });
 ```
 
-Funding check before post: `backend/src/chain/agent-wallet.ts` (`checkAgentFunding`).
+Funding check before post: `backend/src/chain/agent-wallet.ts` (`checkAgentFunding` against the caller address).
 
 ### Worker relay writes (Circle relayer wallet)
 
@@ -123,7 +123,7 @@ Work submission relay: `backend/src/proof/submit-work.ts` → `submitWork(uint25
 | `backend/src/chain/escrow.ts` | Public client, escrow ABI reads, fallback RPC transport |
 | `backend/src/chain/rpc-url.ts` | Default Arc RPC list + `ARC_RPC_URL` override |
 | `backend/src/chain/task-state.ts` | On-chain task reads + cache invalidation |
-| `backend/src/chain/task-view.ts` | Merge Supabase tasks with live RPC state |
+| `backend/src/chain/task-view.ts` | Live task list for the current escrow (`nextTaskId`) + Arc RPC enrichment |
 | `backend/src/chain/usdc-balance.ts` | ERC-20 USDC balance (`0x3600…0000`, 6 decimals) |
 
 ### Frontend (Arc + balance display)
@@ -140,7 +140,7 @@ Workers connect their **own** wallet (not Circle): `frontend/lib/link-wallet.ts`
 ## Key env vars
 
 - `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET` — SDK auth
-- `CIRCLE_WALLET_SET_ID`, `CIRCLE_AGENT_WALLET_ID`, `CIRCLE_RELAYER_WALLET_ID`
+- `CIRCLE_WALLET_SET_ID`, `CIRCLE_RELAYER_WALLET_ID`
 - `ESCROW_CONTRACT_ADDRESS`, `ESCROW_DEPLOY_BLOCK`
 - `ARC_RPC_URL` — optional comma-separated RPC list
 
@@ -155,10 +155,9 @@ Workers connect their **own** wallet (not Circle): `frontend/lib/link-wallet.ts`
 
 | Role | Address |
 | ---- | ------- |
-| **TaskEscrow** | `0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52` |
-| **Agent wallet** | `0x42472b448b6ba8bb654483d4773db715901a64a7` |
+| **TaskEscrow** | `0x0b2c4f5E437f016a1a27686D4004ac58Ca3510B9` |
 | **Relayer wallet** | `0xd055b6cee7d72bc5111119ec7beb8c56b2f61ae1` |
 
-Deploy block `61231705`. See [`contracts/deployments/arc-testnet.json`](../contracts/deployments/arc-testnet.json) and the README testnet table for Arcscan links.
+Deploy block `62525769`. Poster wallets are created at register time. See [`contracts/deployments/arc-testnet.json`](../contracts/deployments/arc-testnet.json) and the README testnet table for Arcscan links.
 
 See [`AGENTS.md`](../AGENTS.md) for pinned SDK versions and nonce-queue rules.

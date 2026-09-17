@@ -59,7 +59,7 @@ export function handleTaskPosted(event: TaskPostedEvent): void {
   task.submissionDeadline = BigInt.zero();
   task.round = event.params.round.toI32();
   task.state = "Open";
-  task.agent = event.params.agent;
+  task.agent = event.params.poster;
   task.winningBidAmount = BigInt.zero();
   task.createdAt = event.block.timestamp;
   task.updatedAt = event.block.timestamp;
@@ -155,7 +155,7 @@ export function handlePaymentReleased(event: PaymentReleasedEvent): void {
   const payment = new Payment(paymentId);
   payment.task = task.id;
   payment.worker = workerId(event.params.worker);
-  payment.agent = event.params.agent;
+  payment.agent = event.params.poster;
   payment.workerAmount = event.params.workerAmount;
   payment.refundAmount = event.params.refundAmount;
   payment.round = event.params.round.toI32();

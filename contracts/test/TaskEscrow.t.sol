@@ -23,6 +23,7 @@ contract TaskEscrowTest is Test {
     TaskEscrow internal escrow;
 
     address internal agent = makeAddr("agent");
+    address internal otherPoster = makeAddr("otherPoster");
     address internal relayer = makeAddr("relayer");
     address internal worker1 = makeAddr("worker1");
     address internal worker2 = makeAddr("worker2");
@@ -32,8 +33,9 @@ contract TaskEscrowTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        escrow = new TaskEscrow(address(usdc), agent, relayer);
+        escrow = new TaskEscrow(address(usdc), relayer);
         usdc.mint(agent, 10_000_000);
+        usdc.mint(otherPoster, 10_000_000);
     }
 
     function _approveAgent(uint256 amount) internal {
@@ -89,7 +91,7 @@ contract TaskEscrowTest is Test {
         vm.prank(agent);
         escrow.rejectWork(taskId);
 
-        (, , , , uint256 deadlineAfter, , , , , , ,) = _task(taskId);
+        (, , , , uint256 deadlineAfter, , , , , , , ,) = _task(taskId);
         assertEq(deadlineAfter, rejectTime + SUBMISSION_WINDOW);
         assertEq(uint8(_taskState(taskId)), uint8(TaskEscrow.TaskState.Assigned));
 
@@ -244,7 +246,7 @@ contract TaskEscrowTest is Test {
         uint256 bidId = _placeBid(taskId, worker1, 500_000);
         vm.warp(block.timestamp + 1 hours + 1);
         vm.prank(relayer);
-        vm.expectRevert(TaskEscrow.NotAgent.selector);
+        vm.expectRevert(TaskEscrow.NotPoster.selector);
         escrow.selectWinner(taskId, bidId);
     }
 
@@ -257,7 +259,7 @@ contract TaskEscrowTest is Test {
         vm.prank(relayer);
         escrow.submitWork(taskId, keccak256("x"));
         vm.prank(relayer);
-        vm.expectRevert(TaskEscrow.NotAgent.selector);
+        vm.expectRevert(TaskEscrow.NotPoster.selector);
         escrow.approveWork(taskId);
     }
 
@@ -269,7 +271,7 @@ contract TaskEscrowTest is Test {
         escrow.selectWinner(taskId, bidId);
         vm.warp(block.timestamp + SUBMISSION_WINDOW + 1);
         vm.prank(relayer);
-        vm.expectRevert(TaskEscrow.NotAgent.selector);
+        vm.expectRevert(TaskEscrow.NotPoster.selector);
         escrow.reclaimTask(taskId, block.timestamp + 2 hours);
     }
 
@@ -380,8 +382,30 @@ contract TaskEscrowTest is Test {
         _assertEventTopic(keccak256("TaskCancelled(uint256,address,uint256,uint256)"));
     }
 
+    function test_otherPosterCannotSelectWinner() public {
+        uint256 taskId = _postTask(1 hours, BUDGET);
+        uint256 bidId = _placeBid(taskId, worker1, 500_000);
+        vm.warp(block.timestamp + 1 hours + 1);
+        vm.prank(otherPoster);
+        vm.expectRevert(TaskEscrow.NotPoster.selector);
+        escrow.selectWinner(taskId, bidId);
+    }
+
+    function test_secondPosterFundsOwnTask() public {
+        vm.prank(otherPoster);
+        usdc.approve(address(escrow), BUDGET);
+        vm.prank(otherPoster);
+        uint256 taskId = escrow.postTask(
+            "other agent task", BUDGET, block.timestamp + 1 hours, SUBMISSION_WINDOW
+        );
+        (,,,,,,,,,,,, address poster) = _task(taskId);
+        assertEq(poster, otherPoster);
+        assertEq(usdc.balanceOf(otherPoster), 10_000_000 - BUDGET);
+        assertEq(usdc.balanceOf(agent), 10_000_000);
+    }
+
     function _taskState(uint256 taskId) internal view returns (TaskEscrow.TaskState state) {
-        (, , , , , , state, , , , ,) = _task(taskId);
+        (, , , , , , state, , , , , ,) = _task(taskId);
     }
 
     function _task(uint256 taskId)
@@ -399,7 +423,8 @@ contract TaskEscrowTest is Test {
             uint256 winningBidId,
             uint256 winningBidAmount,
             bytes32 proofHash,
-            uint256 currentRoundBidCount
+            uint256 currentRoundBidCount,
+            address poster
         )
     {
         (
@@ -414,7 +439,8 @@ contract TaskEscrowTest is Test {
             winningBidId,
             winningBidAmount,
             proofHash,
-            currentRoundBidCount
+            currentRoundBidCount,
+            poster
         ) = escrow.tasks(taskId);
     }
 

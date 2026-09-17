@@ -10,7 +10,7 @@ Levantate Bridge indexes every escrow state transition on **Arc testnet** and qu
 
 | Use | Where in code | GraphQL source |
 | --- | ------------- | -------------- |
-| **Worker UI task state** | `backend/src/chain/task-view.ts`, `backend/src/subgraph/tasks.ts` | `Task` entity (state, deadlines, round, bids) — one batch query for list/detail |
+| **Worker UI / live task list** | `backend/src/chain/task-view.ts` | **Not GraphQL.** Arc RPC on the current escrow (`id < nextTaskId`). Task ids restart at 0 on redeploy, so overlaying the Network subgraph by id paints previous-contract ghosts over live tasks. |
 | **Budget derivation** | `backend/src/agent/budget.ts` | Median paid amount + submission window from `Payment` entities |
 | **Bid scoring** | `backend/src/agent/score-bids.ts` | Worker `completionRate`, `missedDeadlines`, historical price median |
 | **Winner loop** | `backend/src/agent/runner.ts`, `operations.ts` | Calls `scoreBids` after bid deadline |
@@ -25,8 +25,8 @@ Manifest — `subgraph/subgraph.yaml` (network `arc-testnet`, all eight handlers
 ```yaml
 network: arc-testnet
 source:
-  address: "0xc8F1db364B14D7Aa4ea620bF9f649Ef3D7F14d52"
-  startBlock: 61231705
+  address: "0x0b2c4f5E437f016a1a27686D4004ac58Ca3510B9"
+  startBlock: 62525769
 eventHandlers:
   - event: TaskPosted(...)
     handler: handleTaskPosted
@@ -47,9 +47,9 @@ export function handleWorkerAssigned(event: WorkerAssignedEvent): void {
 }
 ```
 
-Schema entities: `subgraph/schema.graphql` — `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline`, `EscrowEvent`.
+Schema entities: `subgraph/schema.graphql` — `Task`, `Bid`, `Worker`, `Payment`, `MissedDeadline`, `EscrowEvent`. `Task.agent` stores the **poster** address from `TaskPosted` (field name kept so scoring queries stay stable).
 
-Deploy: `subgraph/package.json` → `npm run codegen`, `graph auth`, `npm run deploy`.
+Deploy: `subgraph/package.json` → `npm run codegen`, `graph auth`, `npm run deploy`. Studio `v0.0.5` indexes the poster-model escrow (`0x0b2c4f5E…3510B9` from block `62525769`). Publishing to the Graph Network is separate; historical scoring still uses `GRAPH_SUBGRAPH_ID` on the gateway.
 
 ## Backend GraphQL client
 
