@@ -18,6 +18,10 @@ flowchart TB
     CL[Claude / ChatGPT / Cursor<br/>HTTPS /mcp OAuth or Bearer key]
   end
 
+  subgraph Site["Public site (Next.js)"]
+    FE[Worker UI · reverse-proxies /mcp /oauth /api]
+  end
+
   subgraph Backend["Backend"]
     MCP[Streamable HTTP MCP]
     AL[Winner / proof loops<br/>sign with that task's poster wallet]
@@ -45,11 +49,8 @@ flowchart TB
     GQL[GraphQL gateway + API key]
   end
 
-  subgraph WorkerUI["Worker frontend (Next.js)"]
-    FE[Browse · bid · submit proof<br/>link payout wallet]
-  end
-
-  CL --> MCP
+  CL --> FE
+  FE --> MCP
   REG --> AW
   MCP --> AL
   AL -->|"postTask · selectWinner · approveWork · rejectWork · reclaimTask · cancel/abort"| RQ

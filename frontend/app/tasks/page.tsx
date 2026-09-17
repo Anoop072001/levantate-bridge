@@ -39,8 +39,8 @@ export default function TasksPage() {
             ) : (
               <p className="text-sm text-muted-foreground">
                 Connect a payout wallet before your first bid.{" "}
-                <Link href="/verify?return=/tasks" className="underline underline-offset-2">
-                  Link wallet
+                <Link href="/wallet" className="underline underline-offset-2">
+                  Wallet
                 </Link>
                 . Every bid still needs a fresh Selfie Check.
               </p>

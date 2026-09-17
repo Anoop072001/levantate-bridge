@@ -122,10 +122,10 @@ export function TaskBoard({
       <div className="mt-4 space-y-2 border-t border-border pt-8 text-center">
         <p className="text-sm text-muted-foreground">Need a payout address first?</p>
         <Link
-          href="/verify?return=/tasks"
+          href="/wallet"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground transition-colors hover:text-gray-600"
         >
-          Link wallet
+          Wallet
           <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </div>

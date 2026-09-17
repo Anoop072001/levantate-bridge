@@ -92,4 +92,4 @@ await push(
   "id",
 );
 
-console.log("Import complete. Verified workers must re-link a self-custodied wallet at /verify.");
+console.log("Import complete. Verified workers must re-link a self-custodied wallet at /wallet.");

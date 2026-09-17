@@ -7,18 +7,22 @@ function header(req: IncomingMessage, name: string): string | undefined {
   return undefined;
 }
 
-/** Public HTTPS origin as Claude/ChatGPT will call it (ngrok, Heroku, or PUBLIC_BACKEND_URL). */
+/**
+ * Origin Claude/ChatGPT should call. Prefer `x-forwarded-host` so a frontend reverse-proxy
+ * advertises `https://<site>/mcp` instead of the private backend host.
+ */
 export function publicBaseUrl(req: IncomingMessage): string {
-  const fromEnv = process.env.PUBLIC_BACKEND_URL?.trim().replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
-
+  const forwardedHost = header(req, "x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || header(req, "host") || "localhost:3001";
   const proto =
     header(req, "x-forwarded-proto")?.split(",")[0]?.trim() ||
-    (header(req, "x-forwarded-ssl") === "on" ? "https" : undefined);
-  const host =
-    header(req, "x-forwarded-host")?.split(",")[0]?.trim() || header(req, "host") || "localhost:3001";
-  const scheme = proto || (host.includes("localhost") || host.startsWith("127.") ? "http" : "https");
-  return `${scheme}://${host}`;
+    (header(req, "x-forwarded-ssl") === "on" ? "https" : undefined) ||
+    (host.includes("localhost") || host.startsWith("127.") ? "http" : "https");
+  if (forwardedHost) return `${proto}://${host}`;
+
+  const fromEnv = process.env.PUBLIC_BACKEND_URL?.trim().replace(/\/$/, "");
+  if (fromEnv) return fromEnv;
+  return `${proto}://${host}`;
 }
 
 export function mcpResourceUrl(req: IncomingMessage): string {

@@ -15,7 +15,6 @@ const x402Stubs: Record<string, string> = {
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   env: {
-    NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001",
     NEXT_PUBLIC_WORLD_APP_ID:
       process.env.NEXT_PUBLIC_WORLD_APP_ID ?? process.env.WORLD_APP_ID ?? "",
     NEXT_PUBLIC_WORLD_RP_ID:

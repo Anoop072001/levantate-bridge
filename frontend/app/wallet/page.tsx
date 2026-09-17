@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
 import { useAccount } from "wagmi";
 import { ChangePayoutWallet } from "@/components/ChangePayoutWallet";
 import { ConnectCta } from "@/components/ConnectCta";
+import { LinkWalletButton } from "@/components/LinkWalletButton";
 import { PageFrame } from "@/components/PageFrame";
 import {
   ARC_EXPLORER,
@@ -58,8 +58,8 @@ export default function WalletPage() {
       <div className="mb-10 space-y-4 text-center">
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">Your wallet</h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          You hold the keys. Levantate has exactly one address for you — the payout address you
-          signed with — and it cannot move your funds. Use Connect to add Arc testnet if you need it.
+          Connect a wallet you already control and sign once to set your payout address. Levantate
+          cannot move your funds. Use Connect to add Arc testnet if you need it.
         </p>
       </div>
 
@@ -107,7 +107,11 @@ export default function WalletPage() {
           </AnimatePresence>
         </motion.div>
         <div className="flex justify-center py-6">
-          <ConnectCta variant="light" />
+          {!session && !registeredPayout ? (
+            <LinkWalletButton label="Sign to link this payout address" />
+          ) : (
+            <ConnectCta variant="light" />
+          )}
         </div>
       </div>
 
@@ -140,11 +144,8 @@ export default function WalletPage() {
 
       {!session && !registeredPayout ? (
         <p className="mt-8 text-center text-sm text-muted-foreground">
-          After connecting,{" "}
-          <Link href="/verify?return=/wallet" className="underline underline-offset-2">
-            sign to link this payout address
-          </Link>
-          .
+          Signing is a free off-chain message and moves nothing. Selfie Check is{" "}
+          <strong>not</strong> part of this step — every bid requires its own proof.
         </p>
       ) : mismatch && !payoutChangeNeeded ? (
         <p className="mt-8 text-center text-sm text-amber-700">

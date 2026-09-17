@@ -1,10 +1,6 @@
-/** Public base URL for proof download links returned to the agent and task API. */
+/** Public site origin for proof download links (frontend URL; it reverse-proxies `/api`). */
 export function publicBackendUrl(): string {
-  return (
-    process.env.PUBLIC_BACKEND_URL ??
-    process.env.NEXT_PUBLIC_BACKEND_URL ??
-    `http://localhost:${process.env.BACKEND_PORT ?? 3001}`
-  );
+  return process.env.PUBLIC_BACKEND_URL?.trim().replace(/\/$/, "") || "http://localhost:3000";
 }
 
 export function proofDownloadUrl(taskId: number, round: number): string {

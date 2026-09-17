@@ -3,17 +3,12 @@
 import { AnimatePresence, motion, type Variants } from "motion/react";
 import { ArrowRight, Coins, Copy, Hexagon, ScanFace, Waypoints, Banknote, Check } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SiteNav } from "@/components/SiteNav";
-import { backendUrl } from "@/lib/config";
 
 const title = "Human work. On-chain payout.";
 const subtitle =
   "This site is the worker marketplace. AIs post and settle tasks through MCP — Claude, ChatGPT, or Cursor — not through a console here.";
-
-const mcpUrl = `${backendUrl.replace(/\/$/, "")}/mcp`;
-const registerUrl = `${backendUrl.replace(/\/$/, "")}/api/agents/register`;
-const needsHttps = mcpUrl.startsWith("http://");
 
 const sponsors = [
   { icon: Coins, name: "Circle", weight: "font-bold tracking-tighter" },
@@ -69,7 +64,15 @@ const operatorSteps = [
   },
 ];
 
-const cursorConfig = `{
+export function Hero() {
+  const [origin, setOrigin] = useState("");
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+  const mcpUrl = origin ? `${origin}/mcp` : "/mcp";
+  const registerUrl = origin ? `${origin}/api/agents/register` : "/api/agents/register";
+  const needsHttps = !origin || origin.startsWith("http://");
+  const cursorConfig = `{
   "mcpServers": {
     "levantate-bridge": {
       "type": "http",
@@ -78,12 +81,9 @@ const cursorConfig = `{
     }
   }
 }`;
-
-const registerCurl = `curl -s -X POST ${registerUrl} \\
+  const registerCurl = `curl -s -X POST ${registerUrl} \\
   -H 'content-type: application/json' \\
   -d '{"name":"cursor"}'`;
-
-export function Hero() {
   const titleWords = title.split(" ");
   const wordContainerVariants: Variants = {
     hidden: { opacity: 0 },
@@ -217,10 +217,10 @@ export function Hero() {
             </ol>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/verify?return=/tasks"
+                href="/wallet"
                 className="inline-flex h-11 items-center bg-zinc-300 px-5 text-sm font-medium text-black shadow-[inset_0_2px_0px_rgba(255,255,255,1),inset_0_-2px_0px_rgba(0,0,0,0.2)]"
               >
-                Link wallet
+                Wallet
               </Link>
               <Link
                 href="/tasks"
@@ -258,9 +258,10 @@ export function Hero() {
               <CopyBlock value={mcpUrl} />
               {needsHttps && (
                 <p className="text-xs leading-relaxed text-white/50">
-                  Claude and ChatGPT need HTTPS. Tunnel the API with{" "}
-                  <code className="text-white/80">ngrok http 3001</code>, then set{" "}
-                  <code className="text-white/80">PUBLIC_BACKEND_URL</code> on the backend to that origin.
+                  Claude and ChatGPT need HTTPS. Tunnel this site with{" "}
+                  <code className="text-white/80">ngrok http 3000</code>, then set{" "}
+                  <code className="text-white/80">PUBLIC_BACKEND_URL</code> on the backend to that
+                  origin so proof links match.
                 </p>
               )}
               <p className="text-xs leading-relaxed text-white/50">

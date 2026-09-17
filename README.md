@@ -87,7 +87,9 @@ npm run build && npm start   # production — compiled JS (~100 MiB idle)
 
 Listens on `http://localhost:3001`. Starts the agent loop (every 30s) and reconciles any stuck relay rows via Arc RPC receipts on startup.
 
-**Heroku:** set the app root to `backend/`, or deploy the `backend` subdirectory. The `Procfile` runs compiled output (`npm run build` via `heroku-postbuild`). Set all keys from `.env.example` as Heroku Config Vars. Optional: `AGENT_WINNER_LOOP=false` if you assign winners manually. Memory is capped with `NODE_OPTIONS=--max-old-space-size=192` in the start script.
+**Heroku:** set the app root to `backend/`, or deploy the `backend` subdirectory. The `Procfile` runs compiled output (`npm run build` via `heroku-postbuild`). Set all keys from `.env.example` as Heroku Config Vars. Set `PUBLIC_BACKEND_URL` and `FRONTEND_ORIGIN` to the **frontend** origin (Vercel), not the Heroku URL. Optional: `AGENT_WINNER_LOOP=false` if you assign winners manually. Memory is capped with `NODE_OPTIONS=--max-old-space-size=192` in the start script.
+
+**Vercel (frontend):** set `BACKEND_URL` to the Heroku origin as a server-only env var. Do not set `NEXT_PUBLIC_BACKEND_URL`.
 
 Health check: `GET http://localhost:3001/health`
 
@@ -99,7 +101,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Workers link a payout wallet at `/verify`, then browse tasks at `/tasks`. Selfie Check runs when they bid. Operators connect through MCP — there is no operator console on this site.
+Open `http://localhost:3000`. The Next app reverse-proxies `/mcp`, `/oauth`, and `/api` to the backend, so the browser never uses the backend host. Workers link a payout wallet at `/wallet`, then browse tasks at `/tasks`. Selfie Check runs when they bid. Operators connect through MCP — there is no operator console on this site.
 
 ### 5. Subgraph (optional — already deployed)
 
@@ -126,7 +128,7 @@ After publishing to the Graph Network, set `GRAPH_QUERY_API_KEY` (from [Subgraph
      -d '{"description":"Collect and summarize complaints from residents in this neighborhood."}'
    ```
 
-2. **Worker links a payout wallet** — open `/verify`, connect a wallet and sign the ownership challenge. This does not authorize bidding.
+2. **Worker links a payout wallet** — open `/wallet`, connect a wallet and sign the ownership challenge. This does not authorize bidding.
 
 3. **Worker bids** — on `/tasks/[id]`, enter an amount ≤ max budget, then pass a **fresh Selfie Check** for that exact bid. The first successful bid binds the World ID nullifier to the wallet. Poll pending tx until confirmed.
 
@@ -153,9 +155,9 @@ explicit MCP tool call (or `POST /api/agent/tasks` with that agent's API key).
 
 **Remote (Streamable HTTP + OAuth)** — Claude.ai or ChatGPT Developer Mode:
 
-1. Run the backend and expose it over HTTPS (`ngrok http 3001` or your deployed API).
-2. Optional: set `PUBLIC_BACKEND_URL` to that exact `https://…` origin so OAuth issuer URLs match the tunnel.
-3. Connector URL: `https://<host>/mcp`
+1. Run frontend + backend. Connector URL is the **site** origin: `https://<frontend>/mcp` (locally `http://localhost:3000/mcp`).
+2. Claude/ChatGPT need HTTPS. Tunnel the frontend (`ngrok http 3000`) or use the deployed Vercel URL. Set `PUBLIC_BACKEND_URL` on the backend to that same origin so proof download links match. Set `BACKEND_URL` on the frontend host (Vercel, server-only) to the private API origin.
+3. Connector URL: `https://<frontend>/mcp`
 4. Authentication: **Sign in now**. OAuth client: **Use Claude’s published identity** (CIMD). ChatGPT uses the same OAuth endpoints automatically.
 5. When the browser opens Levantate, click **Create wallet and allow**. That mints a Circle wallet for that AI (same as `POST /api/agents/register`).
 6. Fund the wallet at [faucet.circle.com](https://faucet.circle.com) (Arc Testnet), then ask the model to post a task.
@@ -169,7 +171,7 @@ explicit MCP tool call (or `POST /api/agent/tasks` with that agent's API key).
   "mcpServers": {
     "levantate-bridge": {
       "type": "http",
-      "url": "https://<your-backend>/mcp",
+      "url": "https://<your-frontend>/mcp",
       "headers": { "Authorization": "Bearer lb_..." }
     }
   }
@@ -236,7 +238,7 @@ Deploy block: `62525769` (`0x3ba1149`). Canonical copy: [`contracts/deployments/
 
 ## Worker wallets are self-custodied
 
-Workers keep their own keys. At `/verify` a worker connects an existing wallet and signs a single off-chain challenge — free, moves nothing, authorizes no transaction. The first Selfie Check bid binds that address one-to-one with the World ID nullifier, and `approveWork` pays it directly.
+Workers keep their own keys. At `/wallet` a worker connects an existing wallet and signs a single off-chain challenge — free, moves nothing, authorizes no transaction. The first Selfie Check bid binds that address one-to-one with the World ID nullifier, and `approveWork` pays it directly.
 
 There is deliberately **no** withdraw endpoint: the worker already owns the wallet, so there is nothing to withdraw from. `/wallet` shows the balance, an explorer link, and an "add Arc testnet" action so the funds are usable immediately.
 

@@ -272,4 +272,6 @@ Environment inventory — keep this current as values are obtained:
 | `SUPABASE_SERVICE_ROLE_KEY` | 4 | pending — **server-only**, bypasses RLS |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | 8 | pending — public WalletConnect Cloud / Reown id for RainbowKit |
 | `LEVANTATE_AGENT_API_KEY` | 4+ | optional — stdio MCP only; HTTP `/mcp` takes a per-agent key or OAuth token |
+| `BACKEND_URL` | 8 | frontend host only, **server-only** — Next reverse-proxies `/mcp` `/oauth` `/api` here (`http://localhost:3001` locally, Heroku in prod). Never `NEXT_PUBLIC_`. |
+| `PUBLIC_BACKEND_URL` | 8 | backend — public **frontend** origin for proof links (`https://<site>`). OAuth issuer prefers `x-forwarded-host` from the proxy. |
 | `ANTHROPIC_API_KEY` *or* `OPENAI_API_KEY` | 7 | present (`OPENAI_API_KEY`, D2 proof evaluation) |
