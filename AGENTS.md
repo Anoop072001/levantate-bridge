@@ -84,6 +84,7 @@ Verified by web search on **2026-09-08**. Re-verify before adding anything not l
 
 | Dependency                                 | Pinned version | Notes                                                                                                                                                |
 | ------------------------------------------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js                                    | `26.12.1`      | Verified 2026-10-23. 2026-10-21 security release (10 CVEs incl. Brotli RCE CVE-2026-111497). Exact pin in `engines` of `/backend` and `/frontend`.    |
 | Solidity                                   | `0.8.36`       | Released 2026-07-09. Pin exactly in pragma, not a range.                                                                                             |
 | Foundry                                    | `v1.8.0`       | Released 2026-08-26. `--isolate` and dynamic test linking are now defaults. `@foundry-rs/*` npm packages are discontinued — install via `foundryup`. |
 | forge-std                                  | `v1.14.0`      | Requires Solidity `^0.8.13`.                                                                                                                         |

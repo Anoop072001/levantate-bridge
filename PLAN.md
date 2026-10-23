@@ -119,7 +119,7 @@ historical price analysis can distinguish a re-bid round from a first-round bid.
 - [x] Install Foundry v1.8.0 via `foundryup`; confirm `forge --version` (installed v1.8.1)
 - [x] `contracts/foundry.toml`: pin `solc = "0.8.36"`, set `evm_version` to Osaka, add `arc_testnet` RPC endpoint
 - [x] Install forge-std v1.14.0 and OpenZeppelin Contracts 5.7.0 into `contracts`
-- [x] Confirm Node ≥ 20.18.2 (required by Circle CLI) — v26.8.1
+- [x] Confirm Node ≥ 20.18.2 (required by Circle CLI) — v26.12.1 (2026-10-21 security release)
 - [x] Add `.env.example` to `contracts`, `backend`, `frontend`, `subgraph` with empty values — root `.env.example` per AGENTS.md
 
 
